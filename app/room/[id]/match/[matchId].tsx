@@ -11,6 +11,15 @@ import type { Squad, MatchEvent, Formation, MatchSimulationSource } from '../../
 
 const SIMULATION_MINUTE_MS = 1000;
 
+// Deterministically pick the single live match for a room. Ordering by round
+// then id guarantees every client agrees on the same match, which prevents the
+// redirect ping-pong that happens when more than one match is left 'live'.
+function pickLiveMatch(matches: any[]) {
+  return (matches ?? [])
+    .filter((candidate) => candidate?.status === 'live')
+    .sort((a, b) => (a.round ?? 0) - (b.round ?? 0) || String(a.id).localeCompare(String(b.id)))[0] ?? null;
+}
+
 const MatchLineups = React.memo(({
   homeSquad,
   awaySquad,
@@ -103,8 +112,12 @@ export default function MatchScreen() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'matches', filter: `room_id=eq.${roomId}` }, async ({ new: changedRow }: any) => {
         // Skip noisy live-playback updates for the current match — only act on status transitions
         if (changedRow?.id === matchId && changedRow?.status === 'live') return;
-        const { data: roomMatches } = await supabase.from('matches').select('id,status').eq('room_id', roomId).order('round');
-        const liveMatch = (roomMatches ?? []).find((candidate: any) => candidate.status === 'live');
+        const { data: roomMatches } = await supabase.from('matches').select('id,status,round').eq('room_id', roomId).order('round');
+        // If our own match is currently live, never redirect away from it. This
+        // is what stops the back-and-forth between two simultaneously-live matches.
+        const current = (roomMatches ?? []).find((candidate: any) => candidate.id === matchId);
+        if (current?.status === 'live') return;
+        const liveMatch = pickLiveMatch(roomMatches ?? []);
         if (liveMatch && liveMatch.id !== matchId) {
           router.replace(`/room/${roomId}/match/${liveMatch.id}`);
         }
@@ -252,10 +265,15 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     const uid = (await supabase.auth.getSession()).data.session?.user.id ?? '';
     setIsHost(room?.host_id === uid);
 
-    const liveMatch = (await supabase.from('matches').select('id,status').eq('room_id', roomId).order('round')).data?.find((candidate: any) => candidate.status === 'live');
-    if (liveMatch && liveMatch.id !== matchId) {
-      router.replace(`/room/${roomId}/match/${liveMatch.id}`);
-      return;
+    // Stay put if our own match is already live; otherwise follow the single
+    // deterministic live match (prevents redirect ping-pong).
+    if (m?.status !== 'live') {
+      const roomMatches = (await supabase.from('matches').select('id,status,round').eq('room_id', roomId).order('round')).data ?? [];
+      const liveMatch = pickLiveMatch(roomMatches);
+      if (liveMatch && liveMatch.id !== matchId) {
+        router.replace(`/room/${roomId}/match/${liveMatch.id}`);
+        return;
+      }
     }
 
     const buildSquad = async (userId: string): Promise<Squad | null> => {
@@ -398,7 +416,7 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
 
   async function ensureCurrentMatchIsPlayable() {
     const roomMatches = await getOrderedMatches();
-    const liveMatch = roomMatches.find((candidate: any) => candidate.status === 'live');
+    const liveMatch = pickLiveMatch(roomMatches);
     if (liveMatch && liveMatch.id !== matchId) {
       router.replace(`/room/${roomId}/match/${liveMatch.id}`);
       return false;
