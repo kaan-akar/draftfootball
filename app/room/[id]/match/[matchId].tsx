@@ -225,40 +225,35 @@ export default function MatchScreen() {
   return (
     <View style={styles.screen}>
       <MatchEventFeed
-            events={events}
-            homeUsername={usernames[match?.home_player_id] ?? 'Ev Sahibi'}
-            awayUsername={usernames[match?.away_player_id] ?? 'Deplasman'}
-            homeScore={homeScore}
-            awayScore={awayScore}
-            isLive={isLive}
-          />
+        events={events}
+        homeUsername={usernames[match?.home_player_id] ?? 'Ev Sahibi'}
+        awayUsername={usernames[match?.away_player_id] ?? 'Deplasman'}
+        homeScore={homeScore}
+        awayScore={awayScore}
+        isLive={isLive}
+      />
 
-          {summary ? (
-            <View style={styles.summaryBox}>
-              <Text style={styles.summaryTitle}>Maç Özeti</Text>
-              <Text style={styles.summaryText}>{summary}</Text>
-              <Text style={styles.mvp}>⭐ MVP: {mvp}</Text>
-            </View>
-          ) : null}
+      {summary ? (
+        <View style={styles.summaryBox}>
+          <Text style={styles.summaryTitle}>Maç Özeti</Text>
+          <Text style={styles.summaryText}>{summary}</Text>
+          <Text style={styles.mvp}>⭐ MVP: {mvp}</Text>
+        </View>
+      ) : null}
 
-          <View style={styles.footer}>
-            {!isFinished && !isLive && (
-              <TouchableOpacity style={styles.startBtn} onPress={startSimulation}>
-                <Text style={styles.startBtnText}>▶ Maçı Başlat</Text>
-              </TouchableOpacity>
-            )}
-            {isLive && <Text style={styles.simulating}>🔄 Simüle ediliyor...</Text>}
-            {isFinished && (
-              <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-                <Text style={styles.backBtnText}>← Fikstüre Dön</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity onPress={() => setShowKeyInput(true)}>
-              <Text style={styles.changeKey}>🔑 API Key</Text>
-            </TouchableOpacity>
-          </View>
-        </>
-      )}
+      <View style={styles.footer}>
+        {!isFinished && !isLive && (
+          <TouchableOpacity style={styles.startBtn} onPress={startSimulation}>
+            <Text style={styles.startBtnText}>▶ Maçı Başlat</Text>
+          </TouchableOpacity>
+        )}
+        {isLive && <Text style={styles.simulating}>🔄 Simüle ediliyor...</Text>}
+        {isFinished && (
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+            <Text style={styles.backBtnText}>← Fikstüre Dön</Text>
+          </TouchableOpacity>
+        )}
+      </View>
     </View>
   );
 }
