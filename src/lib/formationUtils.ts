@@ -127,6 +127,21 @@ export function assignPlayersToFormation(
 }
 
 /**
+ * Maps draft picks to formation slots by round number (round 1 → slot 1, etc.).
+ * Use this during the draft so a pick only fills its intended formation slot.
+ */
+export function assignPlayersByDraftRound(
+  picksByRound: Record<number, FootballPlayer | undefined>,
+  formation: Formation,
+): Array<FormationSlot & { player?: FootballPlayer }> {
+  const slots = getSlotsForFormation(formation);
+  return slots.map((slot, index) => ({
+    ...slot,
+    player: picksByRound[index + 1],
+  }));
+}
+
+/**
  * Returns the formation slot that must be filled on the given draft round (1–11).
  * Rounds follow the tactical slot order: GK first, then defenders, midfield, attack.
  */

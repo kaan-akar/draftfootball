@@ -5,7 +5,7 @@ import {
 import { useLocalSearchParams, router, type ErrorBoundaryProps } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
 import { createPendingPick, initiateAuction, getCurrentPicker, passPendingPick } from '../../../src/lib/draftEngine';
-import { assignPlayersToFormation, canFillSlot, getSlotFitScore, getTargetSlotForRound, phaseForRound, slotDisplayName } from '../../../src/lib/formationUtils';
+import { assignPlayersByDraftRound, canFillSlot, getSlotFitScore, getTargetSlotForRound, phaseForRound, slotDisplayName } from '../../../src/lib/formationUtils';
 import PlayerCard from '../../../src/components/PlayerCard';
 import BudgetBar from '../../../src/components/BudgetBar';
 import DraftOrderIndicator from '../../../src/components/DraftOrderIndicator';
@@ -127,7 +127,7 @@ export default function PlayerDraftScreen() {
   const [draftSession, setDraftSession] = useState<any>(null);
   const [pickedPlayerIds, setPickedPlayerIds] = useState<Set<string>>(new Set());
   const [myPickedPlayerIds, setMyPickedPlayerIds] = useState<Set<string>>(new Set());
-  const [picksByUser, setPicksByUser] = useState<Record<string, string[]>>({});
+  const [picksByUserRound, setPicksByUserRound] = useState<Record<string, Record<number, string>>>({});
   const [auction, setAuction] = useState<Auction | null>(null);
   const [auctionTarget, setAuctionTarget] = useState<FootballPlayer | null>(null);
   const [pendingPick, setPendingPick] = useState<PendingPick | null>(null);
@@ -154,7 +154,7 @@ export default function PlayerDraftScreen() {
       supabase.from('football_players').select('*').order('price', { ascending: false }),
       supabase.from('room_players').select('*').eq('room_id', roomId),
       supabase.from('draft_sessions').select('*').eq('room_id', roomId).single(),
-      supabase.from('draft_picks').select('football_player_id,picker_id').eq('room_id', roomId).not('football_player_id', 'is', null),
+      supabase.from('draft_picks').select('football_player_id,picker_id,round').eq('room_id', roomId).not('football_player_id', 'is', null),
       supabase.from('pending_picks').select('*').eq('room_id', roomId).in('status', ['active', 'auctioning']).order('created_at', { ascending: false }).limit(1).maybeSingle(),
       supabase.from('auctions').select('*').eq('room_id', roomId).eq('status', 'active').maybeSingle(),
     ]);
@@ -171,12 +171,12 @@ export default function PlayerDraftScreen() {
     ));
     // Group every player's picks by user so we can tell which positions each
     // person has already filled (used to gate auction/objection eligibility).
-    const byUser: Record<string, string[]> = {};
+    const byUserRound: Record<string, Record<number, string>> = {};
     (picks ?? []).forEach((x: any) => {
       if (!x.football_player_id) return;
-      (byUser[x.picker_id] ??= []).push(x.football_player_id);
+      (byUserRound[x.picker_id] ??= {})[x.round] = x.football_player_id;
     });
-    setPicksByUser(byUser);
+    setPicksByUserRound(byUserRound);
 
     setPendingPick((pending as PendingPick | null) ?? null);
     if (pending?.football_player_id) {
@@ -210,12 +210,14 @@ export default function PlayerDraftScreen() {
   const usernames = Object.fromEntries(roomPlayers.map((p) => [p.user_id, p.username]));
   const waitingOnObjection = !!pendingPick || !!auction;
   const myFormation = me?.formation as Formation | undefined;
-  const myPickedPlayers = allPlayers.filter((player) => myPickedPlayerIds.has(player.id));
-  const myAssignedSlots = myFormation ? assignPlayersToFormation(myPickedPlayers, myFormation) : [];
+  const myPicksByRound: Record<number, FootballPlayer> = {};
+  Object.entries(picksByUserRound[myUserId] ?? {}).forEach(([r, id]) => {
+    const player = allPlayers.find((p) => p.id === id);
+    if (player) myPicksByRound[Number(r)] = player;
+  });
+  const myAssignedSlots = myFormation ? assignPlayersByDraftRound(myPicksByRound, myFormation) : [];
   const targetSlot = myFormation ? getTargetSlotForRound(myFormation, round) : undefined;
-  const targetSlotFilled = targetSlot
-    ? myAssignedSlots.find((slot) => slot.slotId === targetSlot.slotId)?.player
-    : undefined;
+  const targetSlotFilled = !!(picksByUserRound[myUserId]?.[round]);
   const showFloatingPreview = width >= 1100;
   const canRespondToPendingPick = !!pendingPick
     && pendingPick.status === 'active'
@@ -233,12 +235,9 @@ export default function PlayerDraftScreen() {
   const getEligiblePlayerBidders = (player: FootballPlayer) => roomPlayers.filter((p) => {
     if (!p.formation) return false;
     if (p.player_budget < player.price) return false;
+    if (picksByUserRound[p.user_id]?.[round]) return false;
     const slot = getTargetSlotForRound(p.formation as Formation, round);
     if (!slot) return false;
-    const theirPickedIds = picksByUser[p.user_id] ?? [];
-    const theirPlayers = allPlayers.filter((pl) => theirPickedIds.includes(pl.id));
-    const theirAssigned = assignPlayersToFormation(theirPlayers, p.formation as Formation);
-    if (theirAssigned.find((s) => s.slotId === slot.slotId)?.player) return false;
     return canFillSlot(player.positions, slot.position);
   }).map((p) => p.user_id);
 
