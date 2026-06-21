@@ -5,7 +5,7 @@ import {
 import { useLocalSearchParams, router, type ErrorBoundaryProps } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
 import { createPendingPick, initiateAuction, getCurrentPicker, passPendingPick } from '../../../src/lib/draftEngine';
-import { assignPlayersToFormation, hasCompatibleSlot, phaseForRound } from '../../../src/lib/formationUtils';
+import { assignPlayersToFormation, canFillSlot, getSlotFitScore, getTargetSlotForRound, phaseForRound, slotDisplayName } from '../../../src/lib/formationUtils';
 import PlayerCard from '../../../src/components/PlayerCard';
 import BudgetBar from '../../../src/components/BudgetBar';
 import DraftOrderIndicator from '../../../src/components/DraftOrderIndicator';
@@ -37,14 +37,17 @@ function FormationPreview({
   assignedSlots,
   floating,
   compact,
+  activeSlotId,
 }: {
   formation?: Formation;
   assignedSlots: Array<{ slotId: string; position: string; player?: FootballPlayer }>;
   floating: boolean;
   compact?: boolean;
+  activeSlotId?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const filledCount = assignedSlots.filter((slot) => slot.player).length;
+  const activeSlot = activeSlotId ? assignedSlots.find((s) => s.slotId === activeSlotId) : undefined;
 
   if (compact && !expanded) {
     return (
@@ -58,7 +61,9 @@ function FormationPreview({
           <Text style={styles.previewFormation}>{formation ?? 'Formasyon yok'}</Text>
         </View>
         <Text style={styles.previewCompactMeta}>
-          {filledCount}/11 dolu · Göster ▾
+          {activeSlot
+            ? `Tur: ${activeSlot.position} · ${filledCount}/11`
+            : `${filledCount}/11 dolu · Göster ▾`}
         </Text>
       </TouchableOpacity>
     );
@@ -68,13 +73,22 @@ function FormationPreview({
     <Text style={styles.previewHint}>Oyuncular seçildikçe yerleşim burada görünecek.</Text>
   ) : (
     assignedSlots.map((slot) => (
-      <View key={slot.slotId} style={styles.previewRow}>
-        <Text style={styles.previewSlot}>{slot.position}</Text>
+      <View
+        key={slot.slotId}
+        style={[styles.previewRow, slot.slotId === activeSlotId && styles.previewRowActive]}
+      >
+        <Text style={[styles.previewSlot, slot.slotId === activeSlotId && styles.previewSlotActive]}>
+          {slot.position}
+        </Text>
         <Text
-          style={[styles.previewPlayer, !slot.player && styles.previewEmptyPlayer]}
+          style={[
+            styles.previewPlayer,
+            !slot.player && styles.previewEmptyPlayer,
+            slot.slotId === activeSlotId && styles.previewPlayerActive,
+          ]}
           numberOfLines={1}
         >
-          {slot.player?.name ?? 'Boş'}
+          {slot.player?.name ?? (slot.slotId === activeSlotId ? '← Bu tur' : 'Boş')}
         </Text>
       </View>
     ))
@@ -198,7 +212,10 @@ export default function PlayerDraftScreen() {
   const myFormation = me?.formation as Formation | undefined;
   const myPickedPlayers = allPlayers.filter((player) => myPickedPlayerIds.has(player.id));
   const myAssignedSlots = myFormation ? assignPlayersToFormation(myPickedPlayers, myFormation) : [];
-  const myEmptySlots = myAssignedSlots.filter((slot) => !slot.player);
+  const targetSlot = myFormation ? getTargetSlotForRound(myFormation, round) : undefined;
+  const targetSlotFilled = targetSlot
+    ? myAssignedSlots.find((slot) => slot.slotId === targetSlot.slotId)?.player
+    : undefined;
   const showFloatingPreview = width >= 1100;
   const canRespondToPendingPick = !!pendingPick
     && pendingPick.status === 'active'
@@ -206,28 +223,32 @@ export default function PlayerDraftScreen() {
     && pendingPick.eligible_objectors.includes(myUserId)
     && !(pendingPick.passed_by ?? []).includes(myUserId);
 
-  // Filter players for current phase
-  const pgMap: Record<DraftPhase, string> = { coach: 'GK', gk: 'GK', def: 'DEF', mid: 'MID', fwd: 'FWD' };
-  const visiblePlayers = allPlayers.filter((p) => p.position_group === pgMap[phase]);
+  // Each round maps to the next slot in the player's formation (GK → RB → CB …).
+  const visiblePlayers = targetSlot
+    ? allPlayers
+      .filter((p) => !pickedPlayerIds.has(p.id) && canFillSlot(p.positions, targetSlot.position))
+      .sort((a, b) => getSlotFitScore(b.positions, targetSlot.position) - getSlotFitScore(a.positions, targetSlot.position))
+    : [];
 
-  // A player may only bid on / object to a pick if they can still field that
-  // position. Someone whose compatible slot is already filled (e.g. they have
-  // already secured a goalkeeper) is excluded from the auction and objection.
   const getEligiblePlayerBidders = (player: FootballPlayer) => roomPlayers.filter((p) => {
     if (!p.formation) return false;
     if (p.player_budget < player.price) return false;
+    const slot = getTargetSlotForRound(p.formation as Formation, round);
+    if (!slot) return false;
     const theirPickedIds = picksByUser[p.user_id] ?? [];
     const theirPlayers = allPlayers.filter((pl) => theirPickedIds.includes(pl.id));
-    const theirEmptySlots = assignPlayersToFormation(theirPlayers, p.formation as Formation)
-      .filter((slot) => !slot.player);
-    return hasCompatibleSlot(player.positions, theirEmptySlots);
+    const theirAssigned = assignPlayersToFormation(theirPlayers, p.formation as Formation);
+    if (theirAssigned.find((s) => s.slotId === slot.slotId)?.player) return false;
+    return canFillSlot(player.positions, slot.position);
   }).map((p) => p.user_id);
 
   const handleSelect = async (player: FootballPlayer) => {
     if (!isMyTurn) { Alert.alert('Şu an senin sıran değil'); return; }
+    if (!myFormation || !targetSlot) { Alert.alert('Önce formasyon seçmelisin'); return; }
+    if (targetSlotFilled) { Alert.alert('Bu turdaki mevki zaten dolu'); return; }
     if (player.price > (me?.player_budget ?? 0)) { Alert.alert('Bütçen yetersiz'); return; }
-    if (!hasCompatibleSlot(player.positions, myEmptySlots)) {
-      Alert.alert('Formasyonunda bu mevki için boş slot yok');
+    if (!canFillSlot(player.positions, targetSlot.position)) {
+      Alert.alert('Bu oyuncu formasyonundaki bu mevkiye uygun değil', slotDisplayName(targetSlot));
       return;
     }
     try {
@@ -258,7 +279,11 @@ export default function PlayerDraftScreen() {
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <Text style={styles.phase}>{PHASE_LABELS[phase]} — Tur {round}/11</Text>
+        <Text style={styles.phase}>
+          {targetSlot
+            ? `Tur ${round}/11 — ${slotDisplayName(targetSlot)} (${targetSlot.position})`
+            : `${PHASE_LABELS[phase]} — Tur ${round}/11`}
+        </Text>
         {me && <BudgetBar budget={me.player_budget} maxBudget={120} label="Toplam Bütçe" />}
         {me && <Text style={styles.obj}>İtiraz: {me.objection_rights}/3</Text>}
         <Text style={styles.squad}>Kadro: {myPickedPlayerIds.size}/11</Text>
@@ -284,6 +309,7 @@ export default function PlayerDraftScreen() {
             assignedSlots={myAssignedSlots}
             floating={false}
             compact
+            activeSlotId={targetSlot?.slotId}
           />
         )}
 
@@ -294,7 +320,7 @@ export default function PlayerDraftScreen() {
           renderItem={({ item }) => {
             const isPicked = pickedPlayerIds.has(item.id);
             const isMinePick = myPickedPlayerIds.has(item.id);
-            const compatible = hasCompatibleSlot(item.positions, myEmptySlots);
+            const compatible = targetSlot ? canFillSlot(item.positions, targetSlot.position) : false;
             return (
               <PlayerCard
                 player={item}
@@ -307,7 +333,13 @@ export default function PlayerDraftScreen() {
             );
           }}
           contentContainerStyle={[styles.list, showFloatingPreview && styles.listWithPreview]}
-          ListEmptyComponent={<Text style={styles.empty}>Bu fazda oyuncu bulunamadı</Text>}
+          ListEmptyComponent={
+            <Text style={styles.empty}>
+              {targetSlot
+                ? `${slotDisplayName(targetSlot)} mevkisi için uygun oyuncu bulunamadı`
+                : 'Formasyon seçilmedi'}
+            </Text>
+          }
         />
 
         {showFloatingPreview && (
@@ -315,6 +347,7 @@ export default function PlayerDraftScreen() {
             formation={myFormation}
             assignedSlots={myAssignedSlots}
             floating
+            activeSlotId={targetSlot?.slotId}
           />
         )}
       </View>
@@ -387,9 +420,12 @@ const styles = StyleSheet.create({
   previewTitle: { color: '#f3f4f6', fontWeight: '900', fontSize: 14 },
   previewFormation: { color: '#60a5fa', fontSize: 12, marginTop: 2, marginBottom: 8 },
   previewHint: { color: '#6b7280', fontSize: 12, lineHeight: 18 },
-  previewRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2 },
+  previewRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2, borderRadius: 4, paddingHorizontal: 4, marginHorizontal: -4 },
+  previewRowActive: { backgroundColor: '#1e3a5f', borderWidth: 1, borderColor: '#22c55e' },
   previewSlot: { color: '#9ca3af', fontSize: 11, fontWeight: '700', width: 34 },
+  previewSlotActive: { color: '#22c55e' },
   previewPlayer: { color: '#e5e7eb', fontSize: 12, flex: 1 },
+  previewPlayerActive: { color: '#86efac', fontWeight: '700' },
   previewEmptyPlayer: { color: '#6b7280', fontStyle: 'italic' },
   listFlex: { flex: 1 },
   list: { padding: 16, paddingTop: 0 },

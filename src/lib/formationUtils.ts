@@ -67,7 +67,7 @@ export function hasCompatibleSlot(
   return emptySlots.some((slot) => canFillSlot(playerPositions, slot.position));
 }
 
-function getSlotFitScore(
+export function getSlotFitScore(
   playerPositions: DetailedPosition[],
   slotPosition: DetailedPosition,
 ): number {
@@ -124,6 +124,38 @@ export function assignPlayersToFormation(
     ...slot,
     player: assignedPlayersBySlot.get(slot.slotId),
   }));
+}
+
+/**
+ * Returns the formation slot that must be filled on the given draft round (1–11).
+ * Rounds follow the tactical slot order: GK first, then defenders, midfield, attack.
+ */
+export function getTargetSlotForRound(formation: Formation, round: number): FormationSlot | undefined {
+  const slots = getSlotsForFormation(formation);
+  return slots[round - 1];
+}
+
+const SLOT_LABELS_TR: Record<DetailedPosition, string> = {
+  GK: 'Kaleci',
+  RB: 'Sağ Bek',
+  CB: 'Stoper',
+  LB: 'Sol Bek',
+  CDM: 'Defansif Orta Saha',
+  CM: 'Orta Saha',
+  CAM: 'Ofansif Orta Saha',
+  RM: 'Sağ Orta',
+  LM: 'Sol Orta',
+  RW: 'Sağ Kanat',
+  LW: 'Sol Kanat',
+  CF: 'Santrafor',
+  ST: 'Santrafor',
+};
+
+/** Human-readable label for a formation slot, e.g. "Stoper 2" for CB_2. */
+export function slotDisplayName(slot: FormationSlot): string {
+  const base = SLOT_LABELS_TR[slot.position];
+  const suffix = slot.slotId.split('_')[1];
+  return suffix && suffix !== '1' ? `${base} ${suffix}` : base;
 }
 
 /**
