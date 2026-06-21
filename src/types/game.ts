@@ -21,10 +21,10 @@ export interface FormationSlot {
 export interface FootballPlayer {
   id: string;
   name: string;
-  positionGroup: PositionGroup;
+  position_group: PositionGroup;
   positions: DetailedPosition[];
   price: number;           // 1–10 TL
-  peakYears: string;       // e.g. "1998-2006"
+  peak_years: string;       // e.g. "1998-2006"
   caps: number;
   goals: number;
   bio: string;             // LLM sim context
@@ -33,7 +33,7 @@ export interface FootballPlayer {
 export interface Coach {
   id: string;
   name: string;
-  preferredFormations: Formation[];
+  preferred_formations: Formation[];
   price: number;           // 1–10 TL
   style: string;
   bio: string;
@@ -103,15 +103,16 @@ export interface AuctionBid {
 
 export interface Auction {
   id: string;
-  roomId: string;
-  targetPlayerId?: string;
-  targetCoachId?: string;
-  initiatedBy: string;
+  room_id: string;
+  target_player_id?: string;
+  target_coach_id?: string;
+  initiated_by: string;
   status: AuctionStatus;
-  currentHighestBid: number;
-  currentHighestBidder: string | null;
-  currentBidderIndex: number;  // index in draft order for turn-based bidding
-  eligibleBidders: string[];   // user_ids who can participate
+  base_price: number;
+  current_highest_bid: number;
+  current_highest_bidder: string | null;
+  current_bidder_index: number;
+  eligible_bidders: string[];
   bids: AuctionBid[];
 }
 

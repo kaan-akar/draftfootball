@@ -25,10 +25,10 @@ async function seed() {
   // Players — insert in batches of 50
   const playerRows = PLAYERS.map((p) => ({
     name: p.name,
-    position_group: p.positionGroup,
+    position_group: p.position_group,
     positions: p.positions,
     price: p.price,
-    peak_years: p.peakYears,
+    peak_years: p.peak_years,
     caps: p.caps,
     goals: p.goals,
     bio: p.bio,
@@ -44,7 +44,7 @@ async function seed() {
   // Coaches
   const coachRows = COACHES.map((c) => ({
     name: c.name,
-    preferred_formations: c.preferredFormations,
+    preferred_formations: c.preferred_formations,
     price: c.price,
     style: c.style,
     bio: c.bio,

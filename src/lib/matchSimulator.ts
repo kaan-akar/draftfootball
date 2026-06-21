@@ -6,7 +6,7 @@ const MODEL = 'gemini-2.0-flash';
 function buildMatchPrompt(homeSquad: Squad, awaySquad: Squad, homeUsername: string, awayUsername: string): string {
   const formatSquad = (squad: Squad, username: string) => {
     const slotLines = squad.slots
-      .map((s) => `  ${s.position}: ${s.player?.name ?? '?'} (${s.player?.peakYears ?? ''})`)
+      .map((s) => `  ${s.position}: ${s.player?.name ?? '?'} (${s.player?.peak_years ?? ''})`)
       .join('\n');
     return `TAKIM: ${username}
 Formasyon: ${squad.formation}

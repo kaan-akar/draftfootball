@@ -18,18 +18,18 @@ const POS_COLOR: Record<string, string> = {
 
 export default function PlayerCard({ player, onSelect, onObject, disabled, picked, myPick, showActions }: Props) {
   const bg = picked ? '#1f2937' : myPick ? '#14532d' : '#111827';
-  const border = POS_COLOR[player.positionGroup] ?? '#6b7280';
+  const border = POS_COLOR[player.position_group] ?? '#6b7280';
 
   return (
     <View style={[styles.card, { backgroundColor: bg, borderLeftColor: border }]}>
       <View style={styles.header}>
         <View style={[styles.badge, { backgroundColor: border }]}>
-          <Text style={styles.badgeText}>{player.positionGroup}</Text>
+          <Text style={styles.badgeText}>{player.position_group}</Text>
         </View>
         <Text style={styles.price}>{player.price} TL</Text>
       </View>
       <Text style={styles.name}>{player.name}</Text>
-      <Text style={styles.sub}>{player.positions.join(' / ')} · {player.peakYears}</Text>
+      <Text style={styles.sub}>{player.positions.join(' / ')} · {player.peak_years}</Text>
       <Text style={styles.stats}>{player.caps} maç · {player.goals} gol</Text>
       {picked && <Text style={styles.pickedBadge}>{myPick ? '✓ SENİN' : '✗ SEÇİLDİ'}</Text>}
       {showActions && !picked && (

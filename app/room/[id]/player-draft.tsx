@@ -86,7 +86,7 @@ export default function PlayerDraftScreen() {
 
   // Filter players for current phase
   const pgMap: Record<DraftPhase, string> = { coach: 'GK', gk: 'GK', def: 'DEF', mid: 'MID', fwd: 'FWD' };
-  const visiblePlayers = allPlayers.filter((p) => p.positionGroup === pgMap[phase]);
+  const visiblePlayers = allPlayers.filter((p) => p.position_group === pgMap[phase]);
 
   const getMyEmptySlots = () => {
     const formation = me?.formation as Formation | undefined;

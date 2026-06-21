@@ -23,7 +23,7 @@ export default function CoachCard({ coach, onSelect, onObject, disabled, picked,
       </View>
       <Text style={styles.name}>{coach.name}</Text>
       <Text style={styles.style}>{coach.style}</Text>
-      <Text style={styles.formations}>{coach.preferredFormations.join(' · ')}</Text>
+      <Text style={styles.formations}>{(coach.preferred_formations ?? []).join(' · ')}</Text>
       {picked && (
         <Text style={[styles.badge, { color: myPick ? '#10b981' : '#ef4444' }]}>
           {myPick ? '✓ SENİN TD\'N' : '✗ SEÇİLDİ'}

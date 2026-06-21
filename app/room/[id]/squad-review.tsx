@@ -75,8 +75,8 @@ export default function SquadReviewScreen() {
           <Text style={styles.sectionLabel}>İlk 11</Text>
           {sq.players.map((p) => (
             <View key={p.id} style={styles.playerRow}>
-              <View style={[styles.posBadge, { backgroundColor: posBg(p.positionGroup) }]}>
-                <Text style={styles.posText}>{p.positionGroup}</Text>
+              <View style={[styles.posBadge, { backgroundColor: posBg(p.position_group) }]}>
+                <Text style={styles.posText}>{p.position_group}</Text>
               </View>
               <Text style={styles.playerName}>{p.name}</Text>
               <Text style={styles.playerPrice}>{p.price} TL</Text>
