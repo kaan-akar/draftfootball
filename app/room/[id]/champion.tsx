@@ -9,7 +9,8 @@ export default function ChampionScreen() {
   const [standings, setStandings] = useState<any[]>([]);
 
   useEffect(() => {
-    supabase.from('standings').select('*').eq('room_id', roomId).then(({ data }) => {
+    supabase.from('standings').select('*, profiles(username)').eq('room_id', roomId).then(({ data }) => {
+      data = (data ?? []).map((row: any) => ({ ...row, username: row.username ?? row.profiles?.username ?? row.user_id.slice(0, 6) }));
       const sorted = (data ?? []).sort((a: any, b: any) => {
         if (b.points !== a.points) return b.points - a.points;
         return (b.goals_for - b.goals_against) - (a.goals_for - a.goals_against);

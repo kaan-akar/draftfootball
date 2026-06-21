@@ -27,6 +27,7 @@ export default function MatchScreen() {
   const [usernames, setUsernames] = useState<Record<string, string>>({});
   const [displayNames, setDisplayNames] = useState({ home: 'Ev Sahibi', away: 'Deplasman' });
   const [isHost, setIsHost] = useState(false);
+  const isPlayingRef = useRef(false);
   const currentMinuteRef = useRef(0);
   const eventsRef = useRef<MatchEvent[]>([]);
   const llmEnhancedRef = useRef<{ summary: string; mvp: string } | null>(null);
@@ -71,6 +72,10 @@ export default function MatchScreen() {
   }, [matchId, roomId]);
 
   function applyMatchState(nextMatch: any) {
+    // If we are the host and actively running playback, ignore realtime snapshots
+    // (they are our own writes bouncing back, which causes PC flicker)
+    if (isPlayingRef.current) return;
+
     const nextMinute = nextMatch?.current_minute ?? 0;
     const nextEvents = nextMatch?.events ?? [];
     if (nextMatch?.status === 'live') {
@@ -376,6 +381,8 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     return true;
   }
 
+  const [isSimulating, setIsSimulating] = useState(false);
+
   const startSimulation = async () => {
     if (!homeSquad || !awaySquad) { Alert.alert('Kadrolar yüklenemedi'); return; }
     if (!(await ensureCurrentMatchIsPlayable())) return;
@@ -391,27 +398,37 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     currentMinuteRef.current = 0;
     setCurrentMinute(0);
     setSummary(''); setMvp('');
-    setSimulationSource('local');
-    setIsLive(true);
+    setSimulationSource('llm');
+    setIsSimulating(true);
 
     await supabase.from('matches').update({
-      status: 'live', simulation_source: 'local', current_minute: 0, events: [],
+      status: 'live', simulation_source: 'llm', current_minute: 0, events: [],
     }).eq('id', matchId);
 
-    // Fire LLM in background — result enhances summary/mvp only
-    simulateMatch(
-      homeSquad, awaySquad, homeUsername, awayUsername,
-      () => {},
-      (result) => {
-        llmEnhancedRef.current = { summary: result.summary, mvp: result.mvp };
-        setSimulationSource('llm');
-      },
-      () => {},
-    );
+    // Fetch LLM result first, show loading while waiting
+    const llmResult = await new Promise<{ events: MatchEvent[]; home_score: number; away_score: number; summary: string; mvp: string } | null>((resolve) => {
+      simulateMatch(
+        homeSquad, awaySquad, homeUsername, awayUsername,
+        () => {},
+        (result) => resolve(result as any),
+        () => resolve(null),
+      );
+    });
 
-    // Immediately run local simulation — drives the live feed reliably
-    const localResult = simulateMatchLocally(homeSquad, awaySquad, homeUsername, awayUsername);
-    await playTimeline(localResult, 'local');
+    setIsSimulating(false);
+    setIsLive(true);
+    isPlayingRef.current = true;
+
+    if (llmResult) {
+      await playTimeline(llmResult, 'llm');
+    } else {
+      // LLM failed — fall back to local
+      setSimulationSource('local');
+      const localResult = simulateMatchLocally(homeSquad, awaySquad, homeUsername, awayUsername);
+      await playTimeline(localResult, 'local');
+    }
+
+    isPlayingRef.current = false;
   };
 
   async function updateStandings(homeId: string, awayId: string, hScore: number, aScore: number) {
@@ -463,11 +480,12 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
       ) : null}
 
       <View style={styles.footer}>
-        {!isFinished && !isLive && (
+        {!isFinished && !isLive && !isSimulating && (
           <TouchableOpacity style={styles.startBtn} onPress={startSimulation}>
             <Text style={styles.startBtnText}>▶ Maçı Başlat</Text>
           </TouchableOpacity>
         )}
+        {isSimulating && <Text style={styles.simulating}>⏳ LLM maç simüle ediyor...</Text>}
         {isLive && <Text style={styles.simulating}>🔄 Simüle ediliyor...</Text>}
         {isFinished && (
           <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>

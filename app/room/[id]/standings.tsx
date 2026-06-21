@@ -18,9 +18,16 @@ export default function StandingsScreen() {
   }, [roomId]);
 
   async function fetchStandings() {
-    const { data } = await supabase.from('standings').select('*').eq('room_id', roomId);
+    const { data } = await supabase
+      .from('standings')
+      .select('*, profiles(username)')
+      .eq('room_id', roomId);
+    const normalized = (data ?? []).map((row: any) => ({
+      ...row,
+      username: row.username ?? row.profiles?.username ?? row.user_id.slice(0, 6),
+    }));
     setStandings(
-      (data ?? []).sort((a: any, b: any) => {
+      normalized.sort((a: any, b: any) => {
         if (b.points !== a.points) return b.points - a.points;
         const gdA = a.goals_for - a.goals_against;
         const gdB = b.goals_for - b.goals_against;
