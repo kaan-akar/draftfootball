@@ -100,26 +100,14 @@ export default function MatchScreen() {
   const eventsRef = useRef<MatchEvent[]>([]);
   const llmEnhancedRef = useRef<{ summary: string; mvp: string } | null>(null);
 
-  // TODO(diagnostics): temporary logging to find the start/live loop + request
-  // storm root cause. Remove once diagnosed.
-  const renderCountRef = useRef(0);
-  renderCountRef.current += 1;
-  console.log('[MATCH] render #', renderCountRef.current, 'matchId=', matchId);
-  useEffect(() => {
-    console.log('[MATCH] MOUNT', matchId);
-    return () => console.log('[MATCH] UNMOUNT', matchId);
-  }, []);
-
   // Fetch the match exactly once per matchId. The search-param object from
   // expo-router can change identity across renders; without this guard the
   // effect re-runs on every render and hammers the DB (the request storm seen
   // in the network tab), which also bounces the UI between states.
   const fetchedForMatchRef = useRef<string | null>(null);
   useEffect(() => {
-    console.log('[MATCH] fetch effect run, fetchedFor=', fetchedForMatchRef.current, 'matchId=', matchId);
     if (!matchId || fetchedForMatchRef.current === matchId) return;
     fetchedForMatchRef.current = matchId as string;
-    console.log('[MATCH] -> fetchMatch()', matchId);
     fetchMatch();
   }, [matchId]);
 
@@ -152,7 +140,6 @@ export default function MatchScreen() {
         if (current?.status === 'live') return;
         const liveMatch = pickLiveMatch(roomMatches ?? []);
         if (liveMatch && liveMatch.id !== matchId) {
-          console.log('[MATCH] room-live REDIRECT ->', liveMatch.id, 'from', matchId);
           router.replace(`/room/${roomId}/match/${liveMatch.id}`);
         }
         // Champion redirect is handled by the game_rooms channel below.
@@ -285,7 +272,6 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
   }
 
   async function fetchMatch() {
-    console.log('[MATCH] fetchMatch START', matchId);
     const [{ data: m }, { data: room }, { data: rp }] = await Promise.all([
       supabase.from('matches').select('*').eq('id', matchId).single(),
       supabase.from('game_rooms').select('host_id').eq('id', roomId).single(),
@@ -308,7 +294,6 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
       const roomMatches = (await supabase.from('matches').select('id,status,round').eq('room_id', roomId).order('round')).data ?? [];
       const liveMatch = pickLiveMatch(roomMatches);
       if (liveMatch && liveMatch.id !== matchId) {
-        console.log('[MATCH] fetchMatch REDIRECT ->', liveMatch.id, 'from', matchId, 'mStatus=', m?.status);
         router.replace(`/room/${roomId}/match/${liveMatch.id}`);
         return;
       }
@@ -487,7 +472,6 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
 
   const simulatedMatchRef = useRef<string | null>(null);
   const startSimulation = async () => {
-    console.log('[MATCH] startSimulation CALLED', { matchId, isSimulating, isPlaying: isPlayingRef.current, simulated: simulatedMatchRef.current });
     // Guard against double taps / re-entry while we are already preparing or
     // playing a match.
     if (isSimulating || isPlayingRef.current) return;
@@ -574,7 +558,6 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
   // simulation in a loop (the "starting ↔ live" screen bouncing).
   const autostartedRef = useRef(false);
   useEffect(() => {
-    console.log('[MATCH] autostart effect', { autostart, autostarted: autostartedRef.current, isHost, isLive, isFinished, hasSquads: !!(homeSquad && awaySquad), hasMatch: !!match });
     if (autostart !== '1' || autostartedRef.current) return;
     if (!isHost || isLive || isFinished || !homeSquad || !awaySquad || !match) return;
     autostartedRef.current = true;

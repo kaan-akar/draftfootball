@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert, Platform } from 'react-native';
-import { useLocalSearchParams, router } from 'expo-router';
+import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
 
 export default function FixtureScreen() {
@@ -8,6 +8,18 @@ export default function FixtureScreen() {
   const [matches, setMatches] = useState<any[]>([]);
   const [usernames, setUsernames] = useState<Record<string, string>>({});
   const [isHost, setIsHost] = useState(false);
+
+  // Only auto-jump to a live match while THIS screen is focused. The fixture
+  // screen stays mounted underneath the match screen in the navigation stack,
+  // and its realtime listener keeps firing while the host plays the match. If
+  // we redirected on every update, the match screen would remount in an endless
+  // loop (and lose its ?autostart param). useFocusEffect tracks focus so the
+  // redirect only runs when the user is actually looking at the fixture.
+  const isFocusedRef = useRef(true);
+  useFocusEffect(useCallback(() => {
+    isFocusedRef.current = true;
+    return () => { isFocusedRef.current = false; };
+  }, []));
 
   useEffect(() => {
     fetchData();
@@ -34,7 +46,7 @@ export default function FixtureScreen() {
     setIsHost(room?.host_id === uid);
 
     const liveMatch = (m ?? []).find((match: any) => match.status === 'live');
-    if (liveMatch) {
+    if (liveMatch && isFocusedRef.current) {
       router.replace(`/room/${roomId}/match/${liveMatch.id}`);
     }
   }
