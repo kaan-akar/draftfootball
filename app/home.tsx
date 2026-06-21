@@ -105,8 +105,8 @@ export default function HomeScreen() {
       <View style={styles.rules}>
         <Text style={styles.rulesTitle}>Nasıl Oynanır?</Text>
         {[
-          '💼 Önce TD draftı (20 TL bütçe)',
-          '⚽ Sonra oyuncu draftı (100 TL bütçe)',
+          '💼 Önce TD draftı (120 TL toplam bütçeden harcanır)',
+          '⚽ Sonra oyuncu draftı (aynı kalan bütçeyle devam eder)',
           '🔨 Seçime itiraz et → açık artırma başlar',
           '🏆 İlk 11 hazır → lig fikstürü → LLM maçları',
         ].map((r, i) => (

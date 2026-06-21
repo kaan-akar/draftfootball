@@ -54,7 +54,7 @@ export interface GameRoom {
   joinCode: string;
   status: RoomStatus;
   maxPlayers: number;
-  coachDraftBudget: number;  // default 20
+  coachDraftBudget: number;  // legacy field, unused after unified 120 TL budget
   createdAt: string;
 }
 
@@ -63,8 +63,8 @@ export interface RoomPlayer {
   userId: string;
   username: string;
   formation: Formation | null;
-  playerBudget: number;    // starts 100
-  coachBudget: number;     // starts 20
+  playerBudget: number;    // unified total budget, starts 120
+  coachBudget: number;     // legacy field, kept for DB compatibility
   objectionRights: number; // starts 3
   pickedCoachId: string | null;
   isReady: boolean;

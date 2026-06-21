@@ -98,12 +98,12 @@ export default function CoachDraftScreen() {
     && !(pendingPick.passed_by ?? []).includes(myUserId);
 
   const getEligibleCoachBidders = useCallback((coach: Coach) => roomPlayers
-    .filter((p) => p.coach_budget >= coach.price && !p.picked_coach_id)
+    .filter((p) => p.player_budget >= coach.price && !p.picked_coach_id)
     .map((p) => p.user_id), [roomPlayers]);
 
   const handleSelect = async (coach: Coach) => {
     if (!isMyTurn) { Alert.alert('Şu an senin sıran değil'); return; }
-    if (coach.price > (me?.coach_budget ?? 0)) { Alert.alert('Bütçen yetersiz'); return; }
+    if (coach.price > (me?.player_budget ?? 0)) { Alert.alert('Bütçen yetersiz'); return; }
     try {
       const eligibleBidders = getEligibleCoachBidders(coach);
       const eligibleObjectors = roomPlayers
@@ -131,7 +131,7 @@ export default function CoachDraftScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.phase}>🧑‍💼 TEKNİK DİREKTÖR DRAFTI</Text>
-        {me && <BudgetBar budget={me.coach_budget} maxBudget={20} label="TD Bütçesi" color="#8b5cf6" />}
+        {me && <BudgetBar budget={me.player_budget} maxBudget={120} label="Toplam Bütçe" color="#8b5cf6" />}
         {me && <Text style={styles.objections}>İtiraz: {'⚡'.repeat(me.objection_rights)}{'○'.repeat(Math.max(0, 3 - me.objection_rights))} ({me.objection_rights}/3)</Text>}
         {pendingPick && !auction && <Text style={styles.waiting}>Seçim beklemede. Önce itiraz turu tamamlanacak.</Text>}
       </View>
@@ -155,7 +155,7 @@ export default function CoachDraftScreen() {
             picked={pickedCoachIds.has(item.id)}
             myPick={me?.picked_coach_id === item.id}
             showActions={true}
-            disabled={waitingOnObjection || !isMyTurn || pickedCoachIds.has(item.id) || item.price > (me?.coach_budget ?? 0)}
+            disabled={waitingOnObjection || !isMyTurn || pickedCoachIds.has(item.id) || item.price > (me?.player_budget ?? 0)}
             onSelect={() => handleSelect(item)}
           />
         )}
@@ -173,7 +173,7 @@ export default function CoachDraftScreen() {
       <AuctionModal
         auction={auction}
         myUserId={myUserId}
-        myBudget={me?.coach_budget ?? 0}
+        myBudget={me?.player_budget ?? 0}
         targetName={auctionTarget?.name ?? ''}
         usernames={usernames}
         onClose={() => setAuction(null)}

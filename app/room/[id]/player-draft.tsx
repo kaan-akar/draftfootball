@@ -192,7 +192,7 @@ export default function PlayerDraftScreen() {
     <View style={styles.screen}>
       <View style={styles.header}>
         <Text style={styles.phase}>{PHASE_LABELS[phase]} — Tur {round}/11</Text>
-        {me && <BudgetBar budget={me.player_budget} maxBudget={100} label="Bütçe" />}
+        {me && <BudgetBar budget={me.player_budget} maxBudget={120} label="Toplam Bütçe" />}
         {me && <Text style={styles.obj}>İtiraz: {me.objection_rights}/3</Text>}
         <Text style={styles.squad}>Kadro: {myPickedPlayerIds.size}/11</Text>
         {pendingPick && !auction && <Text style={styles.waiting}>Seçim beklemede. Önce itiraz turu tamamlanacak.</Text>}
