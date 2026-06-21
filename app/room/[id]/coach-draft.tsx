@@ -4,13 +4,14 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
-import { submitPick, initiateAuction } from '../../../src/lib/draftEngine';
+import { createPendingPick, initiateAuction, passPendingPick } from '../../../src/lib/draftEngine';
 import { getCurrentPicker } from '../../../src/lib/draftEngine';
 import CoachCard from '../../../src/components/CoachCard';
 import BudgetBar from '../../../src/components/BudgetBar';
 import DraftOrderIndicator from '../../../src/components/DraftOrderIndicator';
 import AuctionModal from '../../../src/components/AuctionModal';
-import type { Coach, Auction } from '../../../src/types/game';
+import ObjectionPromptModal from '../../../src/components/ObjectionPromptModal';
+import type { Coach, Auction, PendingPick } from '../../../src/types/game';
 
 export default function CoachDraftScreen() {
   const { id: roomId } = useLocalSearchParams<{ id: string }>();
@@ -22,6 +23,8 @@ export default function CoachDraftScreen() {
   const [pickedCoachIds, setPickedCoachIds] = useState<Set<string>>(new Set());
   const [auction, setAuction] = useState<Auction | null>(null);
   const [auctionTarget, setAuctionTarget] = useState<Coach | null>(null);
+  const [pendingPick, setPendingPick] = useState<PendingPick | null>(null);
+  const [pendingTarget, setPendingTarget] = useState<Coach | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
@@ -33,6 +36,7 @@ export default function CoachDraftScreen() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` }, fetchAll)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'game_rooms', filter: `id=eq.${roomId}` }, handleRoomChange)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'auctions', filter: `room_id=eq.${roomId}` }, fetchAuction)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pending_picks', filter: `room_id=eq.${roomId}` }, fetchPendingPick)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [roomId]);
@@ -48,6 +52,22 @@ export default function CoachDraftScreen() {
     setRoomPlayers(rp ?? []);
     setDraftSession(ds);
     setPickedCoachIds(new Set((picks ?? []).map((p: any) => p.coach_id).filter(Boolean)));
+    fetchPendingPick();
+  }
+
+  async function fetchPendingPick() {
+    const { data } = await supabase.from('pending_picks').select('*')
+      .eq('room_id', roomId)
+      .in('status', ['active', 'auctioning'])
+      .limit(1)
+      .maybeSingle();
+    setPendingPick((data as PendingPick | null) ?? null);
+    if (data?.coach_id) {
+      const { data: coach } = await supabase.from('coaches').select('*').eq('id', data.coach_id).single();
+      setPendingTarget((coach as Coach) ?? null);
+      return;
+    }
+    setPendingTarget(null);
   }
 
   async function fetchAuction() {
@@ -70,23 +90,39 @@ export default function CoachDraftScreen() {
   const isMyTurn = currentPickerUserId === myUserId;
   const me = roomPlayers.find((p) => p.user_id === myUserId);
   const usernames = Object.fromEntries(roomPlayers.map((p) => [p.user_id, p.username]));
+  const waitingOnObjection = !!pendingPick || !!auction;
+  const canRespondToPendingPick = !!pendingPick
+    && pendingPick.status === 'active'
+    && pendingPick.picker_id !== myUserId
+    && pendingPick.eligible_objectors.includes(myUserId)
+    && !(pendingPick.passed_by ?? []).includes(myUserId);
+
+  const getEligibleCoachBidders = useCallback((coach: Coach) => roomPlayers
+    .filter((p) => p.coach_budget >= coach.price && !p.picked_coach_id)
+    .map((p) => p.user_id), [roomPlayers]);
 
   const handleSelect = async (coach: Coach) => {
     if (!isMyTurn) { Alert.alert('Şu an senin sıran değil'); return; }
     if (coach.price > (me?.coach_budget ?? 0)) { Alert.alert('Bütçen yetersiz'); return; }
     try {
-      await submitPick(roomId, myUserId, coach.id, true, coach.price, 'coach', 1);
+      const eligibleBidders = getEligibleCoachBidders(coach);
+      const eligibleObjectors = roomPlayers
+        .filter((p) => p.user_id !== myUserId && p.objection_rights > 0 && eligibleBidders.includes(p.user_id))
+        .map((p) => p.user_id);
+      await createPendingPick(roomId, myUserId, coach.id, true, coach.price, 'coach', 1, eligibleObjectors);
     } catch (e: any) { Alert.alert('Hata', e.message); }
   };
 
-  const handleObject = async (coach: Coach) => {
-    if ((me?.objection_rights ?? 0) <= 0) { Alert.alert('İtiraz hakkın kalmadı'); return; }
-    // Eligible: players with budget >= coach.price and no coach yet
-    const eligible = roomPlayers
-      .filter((p) => p.coach_budget >= coach.price && !p.picked_coach_id)
-      .map((p) => p.user_id);
+  const handlePassPendingPick = async () => {
     try {
-      await initiateAuction(roomId, myUserId, coach.id, true, coach.price, eligible);
+      if (pendingPick) await passPendingPick(pendingPick.id, myUserId);
+    } catch (e: any) { Alert.alert('Hata', e.message); }
+  };
+
+  const handleObjectPendingPick = async () => {
+    if (!pendingPick || !pendingTarget) return;
+    try {
+      await initiateAuction(pendingPick.id, myUserId, getEligibleCoachBidders(pendingTarget));
     } catch (e: any) { Alert.alert('Hata', e.message); }
   };
 
@@ -97,6 +133,7 @@ export default function CoachDraftScreen() {
         <Text style={styles.phase}>🧑‍💼 TEKNİK DİREKTÖR DRAFTI</Text>
         {me && <BudgetBar budget={me.coach_budget} maxBudget={20} label="TD Bütçesi" color="#8b5cf6" />}
         {me && <Text style={styles.objections}>İtiraz: {'⚡'.repeat(me.objection_rights)}{'○'.repeat(Math.max(0, 3 - me.objection_rights))} ({me.objection_rights}/3)</Text>}
+        {pendingPick && !auction && <Text style={styles.waiting}>Seçim beklemede. Önce itiraz turu tamamlanacak.</Text>}
       </View>
 
       {draftSession && (
@@ -118,12 +155,19 @@ export default function CoachDraftScreen() {
             picked={pickedCoachIds.has(item.id)}
             myPick={me?.picked_coach_id === item.id}
             showActions={true}
-            disabled={!isMyTurn || pickedCoachIds.has(item.id) || item.price > (me?.coach_budget ?? 0)}
+            disabled={waitingOnObjection || !isMyTurn || pickedCoachIds.has(item.id) || item.price > (me?.coach_budget ?? 0)}
             onSelect={() => handleSelect(item)}
-            onObject={!isMyTurn && !pickedCoachIds.has(item.id) ? () => handleObject(item) : undefined}
           />
         )}
         contentContainerStyle={styles.list}
+      />
+
+      <ObjectionPromptModal
+        visible={canRespondToPendingPick && !auction}
+        pickerName={usernames[pendingPick?.picker_id ?? ''] ?? 'Bir oyuncu'}
+        targetName={pendingTarget?.name ?? ''}
+        onPass={handlePassPendingPick}
+        onObject={handleObjectPendingPick}
       />
 
       <AuctionModal
@@ -143,5 +187,6 @@ const styles = StyleSheet.create({
   header: { padding: 16, backgroundColor: '#111827', borderBottomWidth: 1, borderBottomColor: '#1f2937' },
   phase: { color: '#a78bfa', fontWeight: '900', fontSize: 16, marginBottom: 8 },
   objections: { color: '#f59e0b', fontSize: 12, marginTop: 4 },
+  waiting: { color: '#93c5fd', fontSize: 12, marginTop: 6 },
   list: { padding: 16 },
 });

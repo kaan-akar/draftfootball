@@ -2,6 +2,17 @@ import { supabase } from './supabase';
 import { phaseForRound } from './formationUtils';
 import type { DraftPhase } from '../types/game';
 
+interface FinalizePickArgs {
+  roomId: string;
+  pickerId: string;
+  entityId: string;
+  isCoach: boolean;
+  finalPrice: number;
+  phase: DraftPhase;
+  round: number;
+  pickType: 'normal' | 'auction_won';
+}
+
 // ─── Start draft (called by host after lobby) ────────────────────────────────
 export async function startCoachDraft(roomId: string) {
   // Fetch all players in room and shuffle for random order
@@ -39,27 +50,26 @@ export function getCurrentPicker(pickOrder: string[], round: number, indexInRoun
 }
 
 // ─── Submit a pick ──────────────────────────────────────────────────────────
-export async function submitPick(
-  roomId: string,
-  pickerId: string,
-  entityId: string,
-  isCoach: boolean,
-  finalPrice: number,
-  phase: DraftPhase,
-  round: number,
-) {
-  // Insert pick record
+async function finalizePick({
+  roomId,
+  pickerId,
+  entityId,
+  isCoach,
+  finalPrice,
+  phase,
+  round,
+  pickType,
+}: FinalizePickArgs) {
   await supabase.from('draft_picks').insert({
     room_id: roomId,
     round,
     phase,
     picker_id: pickerId,
     ...(isCoach ? { coach_id: entityId } : { football_player_id: entityId }),
-    pick_type: 'normal',
+    pick_type: pickType,
     final_price: finalPrice,
   });
 
-  // Deduct budget
   const budgetField = isCoach ? 'coach_budget' : 'player_budget';
   const { data: rp } = await supabase
     .from('room_players')
@@ -74,8 +84,56 @@ export async function submitPick(
     .eq('room_id', roomId)
     .eq('user_id', pickerId);
 
-  // Advance draft session
   await advanceDraft(roomId, round, phase, isCoach);
+}
+
+export async function createPendingPick(
+  roomId: string,
+  pickerId: string,
+  entityId: string,
+  isCoach: boolean,
+  finalPrice: number,
+  phase: DraftPhase,
+  round: number,
+  eligibleObjectors: string[],
+) {
+  const { data: existingPending } = await supabase
+    .from('pending_picks')
+    .select('id')
+    .eq('room_id', roomId)
+    .in('status', ['active', 'auctioning'])
+    .maybeSingle();
+  if (existingPending) throw new Error('Önce mevcut seçim çözülmeli');
+
+  const uniqueObjectors = [...new Set(eligibleObjectors.filter((userId) => userId !== pickerId))];
+
+  if (uniqueObjectors.length === 0) {
+    await finalizePick({
+      roomId,
+      pickerId,
+      entityId,
+      isCoach,
+      finalPrice,
+      phase,
+      round,
+      pickType: 'normal',
+    });
+    return null;
+  }
+
+  const { data, error } = await supabase.from('pending_picks').insert({
+    room_id: roomId,
+    picker_id: pickerId,
+    round,
+    phase,
+    ...(isCoach ? { coach_id: entityId } : { football_player_id: entityId }),
+    final_price: finalPrice,
+    status: 'active',
+    eligible_objectors: uniqueObjectors,
+    passed_by: [],
+  }).select().single();
+  if (error) throw error;
+  return data;
 }
 
 // ─── Advance to next pick / phase ───────────────────────────────────────────
@@ -136,41 +194,137 @@ async function advanceDraft(roomId: string, round: number, phase: DraftPhase, is
 
 // ─── Initiate an objection / auction ────────────────────────────────────────
 export async function initiateAuction(
-  roomId: string,
+  pendingPickId: string,
   initiatedBy: string,
-  targetId: string,
-  isCoach: boolean,
-  basePrice: number,
   eligibleBidders: string[],
 ) {
-  // Deduct 1 objection right from initiator
+  const { data: pendingPick } = await supabase
+    .from('pending_picks')
+    .select('*')
+    .eq('id', pendingPickId)
+    .single();
+  if (!pendingPick || pendingPick.status !== 'active') throw new Error('İtiraz edilecek aktif seçim yok');
+  if (!pendingPick.eligible_objectors?.includes(initiatedBy)) throw new Error('Bu seçime itiraz edemezsin');
+
   const { data: rp } = await supabase
     .from('room_players')
     .select('objection_rights')
-    .eq('room_id', roomId)
+    .eq('room_id', pendingPick.room_id)
     .eq('user_id', initiatedBy)
     .single();
   const rights = (rp as any)?.objection_rights ?? 0;
   if (rights <= 0) throw new Error('İtiraz hakkın kalmadı');
   await supabase.from('room_players')
     .update({ objection_rights: rights - 1 })
-    .eq('room_id', roomId)
+    .eq('room_id', pendingPick.room_id)
     .eq('user_id', initiatedBy);
 
+  const orderedBidders = [
+    pendingPick.picker_id,
+    ...eligibleBidders.filter((userId) => userId !== pendingPick.picker_id),
+  ];
+
+  await supabase.from('pending_picks').update({
+    status: 'auctioning',
+    updated_at: new Date().toISOString(),
+  }).eq('id', pendingPickId);
+
   const { data, error } = await supabase.from('auctions').insert({
-    room_id: roomId,
-    ...(isCoach ? { target_coach_id: targetId } : { target_player_id: targetId }),
+    room_id: pendingPick.room_id,
+    pending_pick_id: pendingPickId,
+    ...(pendingPick.coach_id
+      ? { target_coach_id: pendingPick.coach_id }
+      : { target_player_id: pendingPick.football_player_id }),
     initiated_by: initiatedBy,
     status: 'active',
-    base_price: basePrice,
-    current_highest_bid: basePrice,
-    current_highest_bidder: null,
-    current_bidder_index: 0,
-    eligible_bidders: eligibleBidders,
+    base_price: pendingPick.final_price,
+    current_highest_bid: pendingPick.final_price,
+    current_highest_bidder: pendingPick.picker_id,
+    current_bidder_index: orderedBidders.length > 1 ? 1 : 0,
+    eligible_bidders: orderedBidders,
+    passed_bidders: [],
     bids: [],
   }).select().single();
   if (error) throw error;
   return data;
+}
+
+export async function passPendingPick(pendingPickId: string, userId: string) {
+  const { data: pendingPick } = await supabase
+    .from('pending_picks')
+    .select('*')
+    .eq('id', pendingPickId)
+    .single();
+  if (!pendingPick || pendingPick.status !== 'active') return;
+  if (!pendingPick.eligible_objectors?.includes(userId)) return;
+
+  const passedBy = [...new Set([...(pendingPick.passed_by ?? []), userId])];
+  const everyonePassed = pendingPick.eligible_objectors.every((eligibleId: string) => passedBy.includes(eligibleId));
+
+  if (everyonePassed) {
+    await supabase.from('pending_picks').update({
+      status: 'resolved',
+      passed_by: passedBy,
+      updated_at: new Date().toISOString(),
+    }).eq('id', pendingPickId);
+
+    await finalizePick({
+      roomId: pendingPick.room_id,
+      pickerId: pendingPick.picker_id,
+      entityId: pendingPick.coach_id ?? pendingPick.football_player_id,
+      isCoach: !!pendingPick.coach_id,
+      finalPrice: pendingPick.final_price,
+      phase: pendingPick.phase,
+      round: pendingPick.round,
+      pickType: 'normal',
+    });
+    return;
+  }
+
+  await supabase.from('pending_picks').update({
+    passed_by: passedBy,
+    updated_at: new Date().toISOString(),
+  }).eq('id', pendingPickId);
+}
+
+function getNextActiveBidderIndex(eligibleBidders: string[], passedBidders: string[], startIndex: number) {
+  for (let offset = 0; offset < eligibleBidders.length; offset += 1) {
+    const index = (startIndex + offset) % eligibleBidders.length;
+    if (!passedBidders.includes(eligibleBidders[index])) {
+      return index;
+    }
+  }
+  return 0;
+}
+
+async function finalizeAuction(auction: any) {
+  const { data: pendingPick } = await supabase
+    .from('pending_picks')
+    .select('*')
+    .eq('id', auction.pending_pick_id)
+    .single();
+  if (!pendingPick) return;
+
+  await supabase.from('auctions').update({
+    status: 'finished',
+    updated_at: new Date().toISOString(),
+  }).eq('id', auction.id);
+
+  await supabase.from('pending_picks').update({
+    status: 'resolved',
+    updated_at: new Date().toISOString(),
+  }).eq('id', pendingPick.id);
+
+  await finalizePick({
+    roomId: pendingPick.room_id,
+    pickerId: auction.current_highest_bidder ?? pendingPick.picker_id,
+    entityId: pendingPick.coach_id ?? pendingPick.football_player_id,
+    isCoach: !!pendingPick.coach_id,
+    finalPrice: auction.current_highest_bid,
+    phase: pendingPick.phase,
+    round: pendingPick.round,
+    pickType: 'auction_won',
+  });
 }
 
 // ─── Submit an auction bid ───────────────────────────────────────────────────
@@ -181,12 +335,17 @@ export async function submitBid(auctionId: string, bidderId: string, amount: num
     .eq('id', auctionId)
     .single();
   if (!auction || auction.status !== 'active') throw new Error('Artırma aktif değil');
+  const currentBidder = auction.eligible_bidders[auction.current_bidder_index % auction.eligible_bidders.length];
+  if (currentBidder !== bidderId) throw new Error('Sıra sende değil');
   if (amount <= auction.current_highest_bid) throw new Error('Daha yüksek teklif ver');
 
   const newBid = { bidderId, amount, timestamp: new Date().toISOString() };
   const updatedBids = [...(auction.bids ?? []), newBid];
-
-  const nextIndex = (auction.current_bidder_index + 1) % auction.eligible_bidders.length;
+  const nextIndex = getNextActiveBidderIndex(
+    auction.eligible_bidders,
+    auction.passed_bidders ?? [],
+    auction.current_bidder_index + 1,
+  );
 
   await supabase.from('auctions').update({
     current_highest_bid: amount,
@@ -198,7 +357,7 @@ export async function submitBid(auctionId: string, bidderId: string, amount: num
 }
 
 // ─── Pass auction turn ───────────────────────────────────────────────────────
-export async function passAuctionTurn(auctionId: string) {
+export async function passAuctionTurn(auctionId: string, bidderId: string) {
   const { data: auction } = await supabase
     .from('auctions')
     .select('*')
@@ -206,36 +365,31 @@ export async function passAuctionTurn(auctionId: string) {
     .single();
   if (!auction || auction.status !== 'active') return;
 
-  const nextIndex = (auction.current_bidder_index + 1) % auction.eligible_bidders.length;
+  const currentBidder = auction.eligible_bidders[auction.current_bidder_index % auction.eligible_bidders.length];
+  if (currentBidder !== bidderId) throw new Error('Sıra sende değil');
 
-  // Check if we've gone full circle back to highest bidder (or no bids at all)
-  // If everyone has passed after the last bid, close the auction
-  const bids: any[] = auction.bids ?? [];
-  const passCount = bids.filter((b: any) => b.amount === undefined).length;
-  // Simple approach: track passes in bids array
-  const passBid = { bidderId: 'PASS', amount: null, timestamp: new Date().toISOString() };
-  const updatedBids = [...bids, passBid];
+  const passedBidders = [...new Set([...(auction.passed_bidders ?? []), bidderId])];
+  const activeBidders = auction.eligible_bidders.filter((userId: string) => !passedBidders.includes(userId));
 
-  // Count consecutive passes since last real bid
-  let consecutivePasses = 0;
-  for (let i = updatedBids.length - 1; i >= 0; i--) {
-    if (updatedBids[i].bidderId === 'PASS') consecutivePasses++;
-    else break;
-  }
+  const passBid = { bidderId, amount: null, timestamp: new Date().toISOString() };
+  const updatedBids = [...(auction.bids ?? []), passBid];
 
-  if (consecutivePasses >= auction.eligible_bidders.length) {
-    // Everyone passed, close auction
+  if (activeBidders.length <= 1) {
     await supabase.from('auctions').update({
-      status: 'finished',
-      current_bidder_index: nextIndex,
+      passed_bidders: passedBidders,
       bids: updatedBids,
       updated_at: new Date().toISOString(),
     }).eq('id', auctionId);
-  } else {
-    await supabase.from('auctions').update({
-      current_bidder_index: nextIndex,
-      bids: updatedBids,
-      updated_at: new Date().toISOString(),
-    }).eq('id', auctionId);
+    await finalizeAuction({ ...auction, bids: updatedBids, passed_bidders: passedBidders });
+    return;
   }
+
+  const nextIndex = getNextActiveBidderIndex(auction.eligible_bidders, passedBidders, auction.current_bidder_index + 1);
+
+  await supabase.from('auctions').update({
+    passed_bidders: passedBidders,
+    current_bidder_index: nextIndex,
+    bids: updatedBids,
+    updated_at: new Date().toISOString(),
+  }).eq('id', auctionId);
 }

@@ -4,13 +4,14 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
-import { submitPick, initiateAuction, getCurrentPicker } from '../../../src/lib/draftEngine';
+import { createPendingPick, initiateAuction, getCurrentPicker, passPendingPick } from '../../../src/lib/draftEngine';
 import { hasCompatibleSlot, getSlotsForFormation, phaseForRound } from '../../../src/lib/formationUtils';
 import PlayerCard from '../../../src/components/PlayerCard';
 import BudgetBar from '../../../src/components/BudgetBar';
 import DraftOrderIndicator from '../../../src/components/DraftOrderIndicator';
 import AuctionModal from '../../../src/components/AuctionModal';
-import type { FootballPlayer, Auction, Formation, DraftPhase } from '../../../src/types/game';
+import ObjectionPromptModal from '../../../src/components/ObjectionPromptModal';
+import type { FootballPlayer, Auction, Formation, DraftPhase, PendingPick } from '../../../src/types/game';
 
 const PHASE_LABELS: Record<DraftPhase, string> = {
   coach: 'TD', gk: '🧤 Kaleciler', def: '🛡 Savunma', mid: '⚙️ Orta Saha', fwd: '⚡ Forvet',
@@ -26,6 +27,8 @@ export default function PlayerDraftScreen() {
   const [myPicks, setMyPicks] = useState<Record<string, string>>({}); // playerId -> slotId
   const [auction, setAuction] = useState<Auction | null>(null);
   const [auctionTarget, setAuctionTarget] = useState<FootballPlayer | null>(null);
+  const [pendingPick, setPendingPick] = useState<PendingPick | null>(null);
+  const [pendingTarget, setPendingTarget] = useState<FootballPlayer | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
@@ -38,6 +41,7 @@ export default function PlayerDraftScreen() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'draft_picks', filter: `room_id=eq.${roomId}` }, fetchAll)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'game_rooms', filter: `id=eq.${roomId}` }, handleRoomChange)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'auctions', filter: `room_id=eq.${roomId}` }, fetchAuction)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pending_picks', filter: `room_id=eq.${roomId}` }, fetchPendingPick)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [roomId]);
@@ -59,6 +63,22 @@ export default function PlayerDraftScreen() {
         (picks ?? []).filter((x: any) => x.picker_id === uid).map((x: any) => [x.football_player_id, x.football_player_id])
       )
     );
+    fetchPendingPick();
+  }
+
+  async function fetchPendingPick() {
+    const { data } = await supabase.from('pending_picks').select('*')
+      .eq('room_id', roomId)
+      .in('status', ['active', 'auctioning'])
+      .limit(1)
+      .maybeSingle();
+    setPendingPick((data as PendingPick | null) ?? null);
+    if (data?.football_player_id) {
+      const { data: player } = await supabase.from('football_players').select('*').eq('id', data.football_player_id).single();
+      setPendingTarget((player as FootballPlayer) ?? null);
+      return;
+    }
+    setPendingTarget(null);
   }
 
   async function fetchAuction() {
@@ -83,6 +103,12 @@ export default function PlayerDraftScreen() {
   const isMyTurn = currentPickerUserId === myUserId;
   const me = roomPlayers.find((p) => p.user_id === myUserId);
   const usernames = Object.fromEntries(roomPlayers.map((p) => [p.user_id, p.username]));
+  const waitingOnObjection = !!pendingPick || !!auction;
+  const canRespondToPendingPick = !!pendingPick
+    && pendingPick.status === 'active'
+    && pendingPick.picker_id !== myUserId
+    && pendingPick.eligible_objectors.includes(myUserId)
+    && !(pendingPick.passed_by ?? []).includes(myUserId);
 
   // Filter players for current phase
   const pgMap: Record<DraftPhase, string> = { coach: 'GK', gk: 'GK', def: 'DEF', mid: 'MID', fwd: 'FWD' };
@@ -95,6 +121,12 @@ export default function PlayerDraftScreen() {
     return slots.filter((s) => !Object.values(myPicks).includes(s.slotId));
   };
 
+  const getEligiblePlayerBidders = (player: FootballPlayer) => roomPlayers.filter((p) => {
+    if (!p.formation) return false;
+    const slots = getSlotsForFormation(p.formation as Formation);
+    return p.player_budget >= player.price && hasCompatibleSlot(player.positions, slots);
+  }).map((p) => p.user_id);
+
   const handleSelect = async (player: FootballPlayer) => {
     if (!isMyTurn) { Alert.alert('Şu an senin sıran değil'); return; }
     if (player.price > (me?.player_budget ?? 0)) { Alert.alert('Bütçen yetersiz'); return; }
@@ -104,18 +136,24 @@ export default function PlayerDraftScreen() {
       return;
     }
     try {
-      await submitPick(roomId, myUserId, player.id, false, player.price, phase, round);
+      const eligibleBidders = getEligiblePlayerBidders(player);
+      const eligibleObjectors = roomPlayers
+        .filter((p) => p.user_id !== myUserId && p.objection_rights > 0 && eligibleBidders.includes(p.user_id))
+        .map((p) => p.user_id);
+      await createPendingPick(roomId, myUserId, player.id, false, player.price, phase, round, eligibleObjectors);
     } catch (e: any) { Alert.alert('Hata', e.message); }
   };
 
-  const handleObject = async (player: FootballPlayer) => {
-    if ((me?.objection_rights ?? 0) <= 0) { Alert.alert('İtiraz hakkın kalmadı'); return; }
-    const eligible = roomPlayers.filter((p) => {
-      const slots = getSlotsForFormation(p.formation as Formation);
-      return p.player_budget >= player.price && hasCompatibleSlot(player.positions, slots);
-    }).map((p) => p.user_id);
+  const handlePassPendingPick = async () => {
     try {
-      await initiateAuction(roomId, myUserId, player.id, false, player.price, eligible);
+      if (pendingPick) await passPendingPick(pendingPick.id, myUserId);
+    } catch (e: any) { Alert.alert('Hata', e.message); }
+  };
+
+  const handleObjectPendingPick = async () => {
+    if (!pendingPick || !pendingTarget) return;
+    try {
+      await initiateAuction(pendingPick.id, myUserId, getEligiblePlayerBidders(pendingTarget));
     } catch (e: any) { Alert.alert('Hata', e.message); }
   };
 
@@ -126,6 +164,7 @@ export default function PlayerDraftScreen() {
         {me && <BudgetBar budget={me.player_budget} maxBudget={100} label="Bütçe" />}
         {me && <Text style={styles.obj}>İtiraz: {me.objection_rights}/3</Text>}
         <Text style={styles.squad}>Kadro: {Object.keys(myPicks).length}/11</Text>
+        {pendingPick && !auction && <Text style={styles.waiting}>Seçim beklemede. Önce itiraz turu tamamlanacak.</Text>}
       </View>
 
       {draftSession && (
@@ -152,14 +191,21 @@ export default function PlayerDraftScreen() {
               picked={isPicked}
               myPick={isMinePick}
               showActions={!isPicked}
-              disabled={!isMyTurn || isPicked || item.price > (me?.player_budget ?? 0) || !compatible}
+              disabled={waitingOnObjection || !isMyTurn || isPicked || item.price > (me?.player_budget ?? 0) || !compatible}
               onSelect={() => handleSelect(item)}
-              onObject={!isMyTurn && !isPicked ? () => handleObject(item) : undefined}
             />
           );
         }}
         contentContainerStyle={styles.list}
         ListEmptyComponent={<Text style={styles.empty}>Bu fazda oyuncu bulunamadı</Text>}
+      />
+
+      <ObjectionPromptModal
+        visible={canRespondToPendingPick && !auction}
+        pickerName={usernames[pendingPick?.picker_id ?? ''] ?? 'Bir oyuncu'}
+        targetName={pendingTarget?.name ?? ''}
+        onPass={handlePassPendingPick}
+        onObject={handleObjectPendingPick}
       />
 
       <AuctionModal
@@ -180,6 +226,7 @@ const styles = StyleSheet.create({
   phase: { color: '#22c55e', fontWeight: '900', fontSize: 15, marginBottom: 8 },
   obj: { color: '#f59e0b', fontSize: 12, marginTop: 2 },
   squad: { color: '#60a5fa', fontSize: 12, marginTop: 2 },
+  waiting: { color: '#93c5fd', fontSize: 12, marginTop: 4 },
   list: { padding: 16 },
   empty: { color: '#6b7280', textAlign: 'center', marginTop: 32 },
 });

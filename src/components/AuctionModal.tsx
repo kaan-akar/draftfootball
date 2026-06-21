@@ -39,7 +39,7 @@ export default function AuctionModal({ auction, myUserId, myBudget, targetName, 
 
   const handlePass = async () => {
     setLoading(true);
-    try { await passAuctionTurn(auction.id); } catch {}
+    try { await passAuctionTurn(auction.id, myUserId); } catch {}
     setLoading(false);
   };
 
@@ -64,7 +64,7 @@ export default function AuctionModal({ auction, myUserId, myBudget, targetName, 
           <ScrollView style={styles.history} showsVerticalScrollIndicator={false}>
             {[...(auction.bids ?? [])].reverse().map((b, i) => (
               <Text key={i} style={styles.histLine}>
-                {b.bidderId === 'PASS' ? `${usernames[b.bidderId] ?? '?'} — PAS` : `${usernames[b.bidderId] ?? '?'} → ${b.amount} TL`}
+                {b.amount == null ? `${usernames[b.bidderId] ?? '?'} — PAS` : `${usernames[b.bidderId] ?? '?'} → ${b.amount} TL`}
               </Text>
             ))}
           </ScrollView>

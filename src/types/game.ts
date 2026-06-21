@@ -104,6 +104,7 @@ export interface AuctionBid {
 export interface Auction {
   id: string;
   room_id: string;
+  pending_pick_id?: string;
   target_player_id?: string;
   target_coach_id?: string;
   initiated_by: string;
@@ -113,7 +114,22 @@ export interface Auction {
   current_highest_bidder: string | null;
   current_bidder_index: number;
   eligible_bidders: string[];
+  passed_bidders: string[];
   bids: AuctionBid[];
+}
+
+export interface PendingPick {
+  id: string;
+  room_id: string;
+  picker_id: string;
+  round: number;
+  phase: DraftPhase;
+  football_player_id?: string;
+  coach_id?: string;
+  final_price: number;
+  status: 'active' | 'auctioning' | 'resolved';
+  eligible_objectors: string[];
+  passed_by: string[];
 }
 
 // ─── Squad ──────────────────────────────────────────────────────────────────
