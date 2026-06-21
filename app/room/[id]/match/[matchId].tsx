@@ -206,6 +206,11 @@ export default function MatchScreen() {
           await playLocalFallbackSimulation();
           return;
         }
+        if (err.startsWith('MODEL_NOT_FOUND:')) {
+          Alert.alert('Gemini modeli bulunamadı', 'Güncel model endpointi kullanılamadı. Yerel hızlı simülasyona geçiliyor.');
+          await playLocalFallbackSimulation();
+          return;
+        }
         Alert.alert('Simülasyon Hatası', err);
         setIsLive(false);
       },

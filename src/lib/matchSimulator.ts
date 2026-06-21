@@ -1,7 +1,7 @@
 import type { Squad, LLMMatchResponse } from '../types/game';
 
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const MODEL = 'gemini-2.0-flash';
+const MODEL = process.env.EXPO_PUBLIC_GEMINI_MODEL?.trim() || 'gemini-3.5-flash';
 
 function scoreSquadStrength(squad: Squad): number {
   const coachBoost = squad.coach ? squad.coach.price * 1.5 : 0;
@@ -210,6 +210,10 @@ export async function simulateMatch(
       const errText = await response.text();
       if (response.status === 429) {
         onError(`RATE_LIMIT:${errText}`);
+        return;
+      }
+      if (response.status === 404) {
+        onError(`MODEL_NOT_FOUND:${errText}`);
         return;
       }
       onError(`Gemini API hatası: ${response.status} — ${errText}`);
