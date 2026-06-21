@@ -34,11 +34,11 @@ Deno.serve(async (req) => {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           responseMimeType: 'application/json',
-          // Without a generous output budget the JSON gets truncated mid-array
-          // and the client can't parse it. Leave plenty of room for any model
-          // "thinking" tokens plus the full match JSON.
-          maxOutputTokens: 16384,
-          temperature: 1.0,
+          // gemini-3.5-flash is a thinking model. Minimise reasoning tokens so
+          // they don't eat into the output budget and truncate the JSON, and
+          // give the actual answer plenty of room (model max = 65536).
+          maxOutputTokens: 65536,
+          thinkingConfig: { thinkingLevel: 'minimal' },
         }
       }),
     });

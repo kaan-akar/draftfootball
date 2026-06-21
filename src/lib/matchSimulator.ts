@@ -269,8 +269,13 @@ export async function simulateMatch(
         if (jsonStr === '[DONE]') continue;
         try {
           const parsed = JSON.parse(jsonStr);
-          const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-          fullText += text;
+          const parts = parsed?.candidates?.[0]?.content?.parts ?? [];
+          // Skip "thought" parts (thinking summaries) — only the real answer
+          // parts contain the JSON we want to accumulate.
+          for (const part of parts) {
+            if (part?.thought) continue;
+            if (typeof part?.text === 'string') fullText += part.text;
+          }
 
           // Try to emit partial events as they come in
           tryEmitPartialEvents(fullText, onEvent);
