@@ -346,21 +346,9 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
 
 
   function buildMinuteTimeline(baseEvents: MatchEvent[]) {
-    const sortedEvents = [...baseEvents].sort((a, b) => a.minute - b.minute);
-    const minutesWithEvents = new Set(sortedEvents.map((event) => event.minute));
-    const timeline: MatchEvent[] = [...sortedEvents];
-
-    for (let minute = 1; minute <= 90; minute += 1) {
-      if (minutesWithEvents.has(minute)) continue;
-      timeline.push({
-        minute,
-        type: 'action',
-        team: minute % 2 === 0 ? 'home' : 'away',
-        description: `${minute}' Oyun bu dakikada kontrollu tempoda devam ediyor. Iki takim da bosluk ariyor.`,
-      });
-    }
-
-    return timeline.sort((a, b) => a.minute - b.minute || a.type.localeCompare(b.type));
+    // Only real events — no filler. The for-loop in playTimeline advances the
+    // clock minute by minute regardless of whether an event exists that minute.
+    return [...baseEvents].sort((a, b) => a.minute - b.minute);
   }
 
   async function ensureCurrentMatchIsPlayable() {

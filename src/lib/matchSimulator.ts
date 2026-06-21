@@ -137,45 +137,74 @@ export function simulateMatchLocally(
   };
 }
 
+function ratingLabel(price: number): string {
+  if (price >= 9) return 'Efsane (10 üzerinden 9-10)';
+  if (price >= 7) return 'Yıldız (10 üzerinden 7-8)';
+  if (price >= 5) return 'İyi (10 üzerinden 5-6)';
+  return 'Orta seviye (10 üzerinden 1-4)';
+}
+
 function buildMatchPrompt(homeSquad: Squad, awaySquad: Squad, homeUsername: string, awayUsername: string): string {
   const formatSquad = (squad: Squad, username: string) => {
+    const coachSection = squad.coach
+      ? `Teknik Direktör: ${squad.coach.name}
+  Taktik Stil: ${squad.coach.style}
+  Tercih Formasyonları: ${squad.coach.preferred_formations.join(', ')}
+  Değer: ${ratingLabel(squad.coach.price)}
+  Biyografi / Felsefe: ${squad.coach.bio}`
+      : `Teknik Direktör: Bilinmiyor`;
+
     const slotLines = squad.slots
-      .map((s) => `  ${s.position}: ${s.player?.name ?? '?'} (${s.player?.peak_years ?? ''})`)
+      .map((s) => {
+        if (!s.player) return `  ${s.position}: (Boş)`;
+        const p = s.player;
+        return `  ${s.position}: ${p.name}
+    Grup: ${p.position_group} | Detay: ${p.positions.join('/')}
+    Zirve Yılları: ${p.peak_years} | A Milli: ${p.caps} maç, ${p.goals} gol
+    Değer: ${ratingLabel(p.price)}
+    Kariyer & Oyun Tarzı: ${p.bio}`;
+      })
       .join('\n');
-    return `TAKIM: ${username}
+
+    return `═══ TAKIM: ${username} ═══
 Formasyon: ${squad.formation}
-Teknik Direktör: ${squad.coach?.name ?? 'Bilinmiyor'} — Stil: ${squad.coach?.style ?? ''}
-İlk 11:
+${coachSection}
+
+İLK 11:
 ${slotLines}`;
   };
 
-  return `Sen gerçekçi bir futbol maç simülatörüsün. Aşağıdaki iki takım arasında 90 dakikalık bir maç simüle et.
+  return `Sen Türk futbol tarihini derinlemesine bilen, gerçekçi bir futbol maç anlatıcısısın.
+
+Aşağıdaki iki Türkiye A Milli Takım kadrosu hayali bir maçta karşı karşıya geliyor. Her oyuncu kendi gerçek kariyerinin zirvesindeymiş gibi oynuyor.
 
 ${formatSquad(homeSquad, homeUsername)}
 
 ${formatSquad(awaySquad, awayUsername)}
 
-KURALLAR:
-- Her oyuncunun gerçek A Milli kariyer istatistiklerini, güçlü/zayıf yönlerini ve dönemini dikkate al
-- Teknik direktörlerin taktik stilini ve tercih formasyonunu oyuna yansıt
-- Maçı 90 dakika boyunca dakika dakika simüle et; önemli her anı bir event olarak ver
-- Goller, sarı kartlar, kırmızı kartlar, kaçan fırsatlar, müdahaleler ve kritik anlar dahil
-- Tarihi gerçekliğe sadık kal: örneğin Hakan Şükür kafa golü atar, Rüştü Reçber müthiş kurtarışlar yapar
-- Canlı yorum hissi yarat: "23' Hakan Şükür ceza sahasında döndü, güçlü sol ayak şutu — GOL!"
-- Her event için 'type' alanını şunlardan biri yap: goal | yellow_card | red_card | save | chance | action
-- Her event için 'team' alanını 'home' veya 'away' olarak belirt
-- SADECE geçerli JSON döndür, başka hiçbir şey yazma
+SİMÜLASYON KURALLARI:
+1. Her oyuncunun gerçek kariyer istatistiklerini (cap, gol, zirve yılları, değer), oyun stilini ve biyografisini birebir maça yansıt
+2. Teknik direktörlerin taktik anlayışını, formasyon tercihlerini ve oyun felsefesini maçın akışına entegre et
+3. Fiziksel özellikler, teknik beceriler, liderlik kalitesi ve o döneme ait gerçek form durumunu hesaba kat
+4. Tarihe sadık kal: örneğin Hakan Şükür'ün ön alan baskısı ve kafa gücü, Rüştü Reçber'in efsane refleksleri, Tugay Kerrimoğlu'nun pas temposu, Emre Belözoğlu'nun sert ve zeki liderliği
+5. Değer farkları belirleyici olsun: efsane oyuncular (9-10) belirleyici anlar yaratsın; orta seviye oyuncular (1-4) daha sınırlı etki yapsın
+6. Formasyon çarpışmasını yansıt: hangi taraf orta sahaya hâkim? Kanatlarda kim üstün? Defans hattı ne kadar sağlam?
+7. 'action' tipini sadece gerçekten önemli taktiksel anlara kullan (örn. kritik bir press, hattı kıran pas, pozisyon değişikliği); tempo dolgusu ekleme
+8. Toplam event sayısı 12-20 arasında olsun; sadece önemli anlar
+9. Her event için 'type': goal | yellow_card | red_card | save | chance | action
+10. Her event için 'team': 'home' veya 'away'
+11. SADECE geçerli JSON döndür, başka hiçbir şey yazma
 
 Döndüreceğin JSON formatı:
 {
   "events": [
-    { "minute": 1, "type": "action", "team": "home", "description": "..." },
+    { "minute": 7, "type": "chance", "team": "home", "description": "..." },
     { "minute": 23, "type": "goal", "team": "home", "description": "..." }
   ],
   "home_score": 2,
   "away_score": 1,
-  "summary": "Maç özeti (3-4 cümle)",
-  "mvp": "MVP oyuncunun adı"
+  "summary": "Maç özeti (3-4 cümle, oyun kalitesini ve kritik anları vurgula)",
+  "mvp": "MVP oyuncunun adı (en etkili performansı sergileyen)"
 }`;
 }
 
