@@ -237,26 +237,6 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     await publishPlaybackSnapshot(nextEvents, source, minute);
   }
 
-  async function playLocalFallbackSimulation() {
-    if (!homeSquad || !awaySquad || !match) return;
-
-    setSimulationSource('local');
-    await supabase.from('matches').update({
-      status: 'live',
-      simulation_source: 'local',
-      current_minute: currentMinuteRef.current,
-    }).eq('id', matchId);
-
-    const result = simulateMatchLocally(
-      homeSquad,
-      awaySquad,
-      usernames[match.home_player_id] ?? 'Ev Sahibi',
-      usernames[match.away_player_id] ?? 'Deplasman',
-    );
-
-    await playTimeline(result, 'local', currentMinuteRef.current);
-  }
-
   async function fetchMatch() {
     const [{ data: m }, { data: room }] = await Promise.all([
       supabase.from('matches').select('*').eq('id', matchId).single(),
@@ -437,6 +417,9 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
   const [isSimulating, setIsSimulating] = useState(false);
 
   const startSimulation = async () => {
+    // Guard against double taps / re-entry while we are already preparing or
+    // playing a match.
+    if (isSimulating || isPlayingRef.current) return;
     if (!homeSquad || !awaySquad) { Alert.alert('Kadrolar yüklenemedi'); return; }
     if (!(await ensureCurrentMatchIsPlayable())) return;
 
@@ -457,13 +440,17 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
       status: 'live', simulation_source: 'llm', current_minute: 0, events: [],
     }).eq('id', matchId);
 
-    // Fetch LLM result first, show loading while waiting
-    const llmResult = await new Promise<{ events: MatchEvent[]; home_score: number; away_score: number; summary: string; mvp: string } | null>((resolve) => {
+    // Fetch LLM result first, show loading while waiting. Capture the failure
+    // reason so we can surface it (Alert does not render on web).
+    const llmOutcome = await new Promise<
+      | { ok: true; result: { events: MatchEvent[]; home_score: number; away_score: number; summary: string; mvp: string } }
+      | { ok: false; error: string }
+    >((resolve) => {
       simulateMatch(
         homeSquad, awaySquad, homeUsername, awayUsername,
         () => {},
-        (result) => resolve(result as any),
-        () => resolve(null),
+        (result) => resolve({ ok: true, result: result as any }),
+        (error) => resolve({ ok: false, error }),
       );
     });
 
@@ -471,19 +458,19 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     setIsLive(true);
     isPlayingRef.current = true;
 
-    if (llmResult) {
-      await playTimeline(llmResult, 'llm');
-    } else {
-      // LLM failed — reset match and show error
+    if (llmOutcome.ok) {
+      await playTimeline(llmOutcome.result, 'llm');
       isPlayingRef.current = false;
-      setIsLive(false);
-      await supabase.from('matches').update({
-        status: 'scheduled', simulation_source: null, current_minute: 0, events: [],
-      }).eq('id', matchId);
-      Alert.alert('LLM Hatası', 'Yapay zeka maçı simüle edemedi. İnternet bağlantınızı kontrol edin ve tekrar deneyin.');
       return;
     }
 
+    // LLM failed — fall back to a local simulation so the match always plays
+    // instead of silently resetting the "Maçı Başlat" button.
+    console.warn('LLM simülasyonu başarısız, yerel simülasyona geçiliyor:', llmOutcome.error);
+    const localResult = simulateMatchLocally(homeSquad, awaySquad, homeUsername, awayUsername);
+    setSimulationSource('local');
+    await supabase.from('matches').update({ simulation_source: 'local' }).eq('id', matchId);
+    await playTimeline(localResult, 'local');
     isPlayingRef.current = false;
   };
 
