@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert, Platform,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { supabase } from '../../../../src/lib/supabase';
@@ -132,6 +132,18 @@ export default function MatchScreen() {
       if (hasOlderMinute || hasFewerEvents) {
         return;
       }
+
+      const minuteUnchanged = nextMinute === currentMinuteRef.current;
+      const eventsUnchanged = nextEvents.length === eventsRef.current.length;
+      if (minuteUnchanged && eventsUnchanged) {
+        return;
+      }
+
+      // Minute tick only — update clock ref without re-rendering the feed tree.
+      if (eventsUnchanged) {
+        currentMinuteRef.current = nextMinute;
+        return;
+      }
     }
 
     setMatch(nextMatch);
@@ -179,27 +191,42 @@ export default function MatchScreen() {
 
 function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     const score = calculateLiveScore(nextEvents);
+    const eventsChanged = nextEvents !== eventsRef.current;
     eventsRef.current = nextEvents;
-    setEvents(nextEvents);
-    setHomeScore(score.home);
-    setAwayScore(score.away);
     currentMinuteRef.current = minute;
+
+    if (eventsChanged) {
+      setEvents(nextEvents);
+      setHomeScore(score.home);
+      setAwayScore(score.away);
+    }
   }
 
   async function publishPlaybackSnapshot(
     nextEvents: MatchEvent[],
     source: MatchSimulationSource | null,
     minute: number,
+    options?: { eventsChanged?: boolean },
   ) {
     const score = calculateLiveScore(nextEvents);
+    const eventsChanged = options?.eventsChanged ?? true;
+
+    if (eventsChanged) {
+      await supabase.from('matches').update({
+        status: 'live',
+        simulation_source: source,
+        current_minute: minute,
+        home_score: score.home,
+        away_score: score.away,
+        events: nextEvents,
+      }).eq('id', matchId);
+      return;
+    }
 
     await supabase.from('matches').update({
-      status: 'live',
-      simulation_source: source,
       current_minute: minute,
       home_score: score.home,
       away_score: score.away,
-      events: nextEvents,
     }).eq('id', matchId);
   }
 
@@ -372,13 +399,15 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     }
 
     for (let minute = Math.max(startMinute + 1, 1); minute <= 90; minute += 1) {
+      let eventsChanged = false;
       while (nextEventIndex < orderedEvents.length && orderedEvents[nextEventIndex].minute <= minute) {
         shownEvents = [...shownEvents, orderedEvents[nextEventIndex]];
         nextEventIndex += 1;
+        eventsChanged = true;
       }
 
       syncPlaybackState(shownEvents, minute);
-      void publishPlaybackSnapshot(shownEvents, source, minute);
+      void publishPlaybackSnapshot(shownEvents, source, minute, { eventsChanged });
       await new Promise((resolve) => setTimeout(resolve, SIMULATION_MINUTE_MS));
     }
 
@@ -505,7 +534,10 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
         </View>
       </View>
 
-      <ScrollView style={styles.detailsScroll} contentContainerStyle={styles.container}>
+      <ScrollView
+        style={[styles.detailsScroll, Platform.OS === 'web' && styles.detailsScrollWeb]}
+        contentContainerStyle={styles.container}
+      >
         <MatchLineups
           homeSquad={homeSquad}
           awaySquad={awaySquad}
@@ -555,6 +587,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#0f172a' },
   feedShell: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
   detailsScroll: { flex: 1 },
+  detailsScrollWeb: { overflowAnchor: 'none' } as object,
   container: { paddingHorizontal: 16, paddingBottom: 32 },
   feedWrapper: { height: 340 },
   lineupBox: {

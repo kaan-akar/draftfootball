@@ -1,6 +1,12 @@
 import React, { memo, useEffect, useState } from 'react';
-import { ScrollView, View, Text, StyleSheet } from 'react-native';
+import { Platform, ScrollView, View, Text, StyleSheet } from 'react-native';
 import type { MatchEvent } from '../types/game';
+
+function eventsSignature(events: MatchEvent[]) {
+  if (events.length === 0) return '0';
+  const last = events[events.length - 1];
+  return `${events.length}:${last.minute}:${last.type}:${last.description}`;
+}
 
 interface Props {
   events: MatchEvent[];
@@ -18,30 +24,37 @@ const EVENT_ICON: Record<string, string> = {
   save: '🧤', chance: '💨', action: '▶',
 };
 
-// Memoised so the ScrollView only re-renders when new events arrive,
+// Memoised so the feed only re-renders when new events arrive,
 // NOT every second when currentMinute changes. This stops PC scroll flicker.
-const EventList = memo(({ events }: { events: MatchEvent[] }) => (
-  <ScrollView style={styles.feed} showsVerticalScrollIndicator={false}>
-    {events.length === 0 && (
-      <Text style={styles.waiting}>Maç başlıyor...</Text>
-    )}
-    {[...events].reverse().map((ev, reversedIdx) => (
-      <View
-        key={events.length - 1 - reversedIdx}
-        style={[
-          styles.event,
-          ev.type === 'goal' && styles.goalEvent,
-          ev.type === 'red_card' && styles.redEvent,
-        ]}
-      >
-        <Text style={styles.minute}>{ev.minute}'</Text>
-        <Text style={styles.icon}>{EVENT_ICON[ev.type] ?? '▶'}</Text>
-        <Text style={styles.desc}>{ev.description}</Text>
-      </View>
-    ))}
-    <View style={{ height: 24 }} />
-  </ScrollView>
-));
+const EventList = memo(
+  ({ events }: { events: MatchEvent[] }) => (
+    <ScrollView
+      style={styles.feed}
+      contentContainerStyle={Platform.OS === 'web' ? styles.feedWeb : undefined}
+      showsVerticalScrollIndicator={false}
+    >
+      {events.length === 0 && (
+        <Text style={styles.waiting}>Maç başlıyor...</Text>
+      )}
+      {[...events].reverse().map((ev, reversedIdx) => (
+        <View
+          key={`${events.length - 1 - reversedIdx}-${ev.minute}-${ev.type}`}
+          style={[
+            styles.event,
+            ev.type === 'goal' && styles.goalEvent,
+            ev.type === 'red_card' && styles.redEvent,
+          ]}
+        >
+          <Text style={styles.minute}>{ev.minute}'</Text>
+          <Text style={styles.icon}>{EVENT_ICON[ev.type] ?? '▶'}</Text>
+          <Text style={styles.desc}>{ev.description}</Text>
+        </View>
+      ))}
+      <View style={{ height: 24 }} />
+    </ScrollView>
+  ),
+  (prev, next) => eventsSignature(prev.events) === eventsSignature(next.events),
+);
 
 const LiveMinuteTag = memo(({
   currentMinute,
@@ -114,6 +127,7 @@ const styles = StyleSheet.create({
   score: { color: '#fbbf24', fontWeight: '900', fontSize: 28, marginHorizontal: 12 },
   liveTag: { color: '#ef4444', fontWeight: '700', textAlign: 'center', marginBottom: 8 },
   feed: { flex: 1 },
+  feedWeb: { overflowAnchor: 'none' } as object,
   waiting: { color: '#6b7280', textAlign: 'center', marginTop: 24, fontSize: 14 },
   event: {
     flexDirection: 'row', alignItems: 'flex-start',
