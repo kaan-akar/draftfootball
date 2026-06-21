@@ -17,6 +17,7 @@ const EVENT_ICON: Record<string, string> = {
 };
 
 export default function MatchEventFeed({ events, homeUsername, awayUsername, homeScore, awayScore, isLive }: Props) {
+
   return (
     <View style={styles.wrap}>
       {/* Scoreboard */}
@@ -28,7 +29,10 @@ export default function MatchEventFeed({ events, homeUsername, awayUsername, hom
       {isLive && <Text style={styles.liveTag}>🔴 CANLI</Text>}
 
       {/* Events */}
-      <ScrollView style={styles.feed} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.feed}
+        showsVerticalScrollIndicator={false}
+      >
         {events.length === 0 && (
           <Text style={styles.waiting}>Maç başlıyor...</Text>
         )}
@@ -46,6 +50,7 @@ export default function MatchEventFeed({ events, homeUsername, awayUsername, hom
             <Text style={styles.desc}>{ev.description}</Text>
           </View>
         ))}
+        {isLive && <View style={{ height: 24 }} />}
       </ScrollView>
     </View>
   );

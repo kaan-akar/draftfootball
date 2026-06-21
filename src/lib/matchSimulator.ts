@@ -1,6 +1,6 @@
+import { supabase } from './supabase';
 import type { Squad, LLMMatchResponse } from '../types/game';
 
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const MODEL = process.env.EXPO_PUBLIC_GEMINI_MODEL?.trim() || 'gemini-3.5-flash';
 
 function scoreSquadStrength(squad: Squad): number {
@@ -185,25 +185,26 @@ export async function simulateMatch(
   awaySquad: Squad,
   homeUsername: string,
   awayUsername: string,
-  apiKey: string,
   onEvent: (event: LLMMatchResponse['events'][number]) => void,
   onDone: (result: LLMMatchResponse) => void,
   onError: (err: string) => void,
 ) {
   const prompt = buildMatchPrompt(homeSquad, awaySquad, homeUsername, awayUsername);
-  const url = `${GEMINI_BASE}/${MODEL}:streamGenerateContent?alt=sse&key=${apiKey}`;
+  
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
+  const url = `${supabaseUrl}/functions/v1/simulate-match`;
 
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.9,
-          maxOutputTokens: 4096,
-        },
-      }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ prompt, model: MODEL }),
     });
 
     if (!response.ok) {

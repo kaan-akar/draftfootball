@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert, TextInput,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { supabase } from '../../../../src/lib/supabase';
@@ -8,9 +8,6 @@ import { simulateMatch, simulateMatchLocally, resetMatchSimulator } from '../../
 import { getSlotsForFormation } from '../../../../src/lib/formationUtils';
 import MatchEventFeed from '../../../../src/components/MatchEventFeed';
 import type { Squad, MatchEvent, Formation } from '../../../../src/types/game';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const GEMINI_KEY_STORAGE = 'gemini_api_key';
 
 export default function MatchScreen() {
   const { id: roomId, matchId } = useLocalSearchParams<{ id: string; matchId: string }>();
@@ -23,13 +20,9 @@ export default function MatchScreen() {
   const [isLive, setIsLive] = useState(false);
   const [summary, setSummary] = useState('');
   const [mvp, setMvp] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [showKeyInput, setShowKeyInput] = useState(false);
-  const [tempKey, setTempKey] = useState('');
   const [usernames, setUsernames] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    AsyncStorage.getItem(GEMINI_KEY_STORAGE).then((k) => { if (k) setApiKey(k); });
     fetchMatch();
   }, [matchId]);
 
@@ -168,15 +161,7 @@ export default function MatchScreen() {
     await updateStandings(match.home_player_id, match.away_player_id, result.home_score, result.away_score);
   }
 
-  const saveApiKey = async () => {
-    if (!tempKey.trim()) return;
-    await AsyncStorage.setItem(GEMINI_KEY_STORAGE, tempKey.trim());
-    setApiKey(tempKey.trim());
-    setShowKeyInput(false);
-  };
-
   const startSimulation = async () => {
-    if (!apiKey) { setShowKeyInput(true); return; }
     if (!homeSquad || !awaySquad) { Alert.alert('Kadrolar yüklenemedi'); return; }
 
     resetMatchSimulator();
@@ -191,7 +176,6 @@ export default function MatchScreen() {
       homeSquad, awaySquad,
       usernames[match.home_player_id] ?? 'Ev Sahibi',
       usernames[match.away_player_id] ?? 'Deplasman',
-      apiKey,
       (event) => {
         setEvents((prev) => {
           const nextEvents = [...prev, event];
@@ -240,28 +224,7 @@ export default function MatchScreen() {
 
   return (
     <View style={styles.screen}>
-      {showKeyInput ? (
-        <View style={styles.keyModal}>
-          <Text style={styles.keyTitle}>Gemini API Key</Text>
-          <Text style={styles.keyDesc}>Google AI Studio'dan ücretsiz key alabilirsin: aistudio.google.com</Text>
-          <TextInput
-            style={styles.keyInput}
-            placeholder="AIza..."
-            placeholderTextColor="#6b7280"
-            value={tempKey}
-            onChangeText={setTempKey}
-            secureTextEntry
-          />
-          <TouchableOpacity style={styles.keyBtn} onPress={saveApiKey}>
-            <Text style={styles.keyBtnText}>Kaydet ve Devam Et</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setShowKeyInput(false)}>
-            <Text style={styles.cancel}>İptal</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <>
-          <MatchEventFeed
+      <MatchEventFeed
             events={events}
             homeUsername={usernames[match?.home_player_id] ?? 'Ev Sahibi'}
             awayUsername={usernames[match?.away_player_id] ?? 'Deplasman'}
