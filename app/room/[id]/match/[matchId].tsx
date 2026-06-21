@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert,
 } from 'react-native';
@@ -10,6 +10,7 @@ import MatchEventFeed from '../../../../src/components/MatchEventFeed';
 import type { Squad, MatchEvent, Formation, MatchSimulationSource } from '../../../../src/types/game';
 
 const SIMULATION_MINUTE_MS = 1000;
+const LLM_RESULT_TIMEOUT_MS = 15000;
 
 export default function MatchScreen() {
   const { id: roomId, matchId } = useLocalSearchParams<{ id: string; matchId: string }>();
@@ -26,6 +27,7 @@ export default function MatchScreen() {
   const [simulationSource, setSimulationSource] = useState<MatchSimulationSource | null>(null);
   const [usernames, setUsernames] = useState<Record<string, string>>({});
   const [isHost, setIsHost] = useState(false);
+  const currentMinuteRef = useRef(0);
 
   useEffect(() => {
     fetchMatch();
@@ -69,6 +71,7 @@ export default function MatchScreen() {
     setMatch(nextMatch);
     setHomeScore(nextMatch?.home_score ?? 0);
     setAwayScore(nextMatch?.away_score ?? 0);
+    currentMinuteRef.current = nextMatch?.current_minute ?? 0;
     setCurrentMinute(nextMatch?.current_minute ?? 0);
     setEvents(nextMatch?.events ?? []);
     setSummary(nextMatch?.summary ?? '');
@@ -109,6 +112,7 @@ export default function MatchScreen() {
     const score = calculateLiveScore(nextEvents);
     setHomeScore(score.home);
     setAwayScore(score.away);
+    currentMinuteRef.current = minute;
     setCurrentMinute(minute);
 
     await supabase.from('matches').update({
@@ -125,7 +129,11 @@ export default function MatchScreen() {
     if (!homeSquad || !awaySquad || !match) return;
 
     setSimulationSource('local');
-    await supabase.from('matches').update({ status: 'live', simulation_source: 'local', current_minute: 0, events: [] }).eq('id', matchId);
+    await supabase.from('matches').update({
+      status: 'live',
+      simulation_source: 'local',
+      current_minute: currentMinuteRef.current,
+    }).eq('id', matchId);
 
     const result = simulateMatchLocally(
       homeSquad,
@@ -134,7 +142,7 @@ export default function MatchScreen() {
       usernames[match.away_player_id] ?? 'Deplasman',
     );
 
-    await playTimeline(result, 'local');
+    await playTimeline(result, 'local', currentMinuteRef.current);
   }
 
   async function fetchMatch() {
@@ -254,15 +262,25 @@ export default function MatchScreen() {
     router.replace(`/room/${roomId}/match/${claimedMatch.id}?autostart=1`);
   }
 
-  async function playTimeline(result: { events: MatchEvent[]; home_score: number; away_score: number; summary: string; mvp: string }, source: MatchSimulationSource) {
+  async function playTimeline(
+    result: { events: MatchEvent[]; home_score: number; away_score: number; summary: string; mvp: string },
+    source: MatchSimulationSource,
+    startMinute = 0,
+  ) {
     const orderedEvents = [...result.events].sort((a, b) => a.minute - b.minute);
-    let shownEvents: MatchEvent[] = [];
-    let nextEventIndex = 0;
+    let shownEvents: MatchEvent[] = orderedEvents.filter((event) => event.minute <= startMinute);
+    let nextEventIndex = shownEvents.length;
 
-    setEvents([]);
-    setCurrentMinute(0);
+    setEvents(shownEvents);
 
-    for (let minute = 1; minute <= 90; minute += 1) {
+    if (startMinute > 0) {
+      await persistPlaybackSnapshot(shownEvents, source, startMinute);
+    } else {
+      currentMinuteRef.current = 0;
+      setCurrentMinute(0);
+    }
+
+    for (let minute = Math.max(startMinute + 1, 1); minute <= 90; minute += 1) {
       while (nextEventIndex < orderedEvents.length && orderedEvents[nextEventIndex].minute <= minute) {
         shownEvents = [...shownEvents, orderedEvents[nextEventIndex]];
         nextEventIndex += 1;
@@ -274,6 +292,16 @@ export default function MatchScreen() {
     }
 
     await persistMatchResult(result, source);
+  }
+
+  async function playWaitingClock(source: MatchSimulationSource, shouldStop: () => boolean) {
+    const maxWaitingMinute = Math.floor(LLM_RESULT_TIMEOUT_MS / SIMULATION_MINUTE_MS);
+
+    for (let minute = 1; minute <= maxWaitingMinute; minute += 1) {
+      await new Promise((resolve) => setTimeout(resolve, SIMULATION_MINUTE_MS));
+      if (shouldStop()) return;
+      await persistPlaybackSnapshot(events, source, minute);
+    }
   }
 
   async function ensureCurrentMatchIsPlayable() {
@@ -301,6 +329,7 @@ export default function MatchScreen() {
     resetMatchSimulator();
     setEvents([]);
     setHomeScore(0); setAwayScore(0);
+    currentMinuteRef.current = 0;
     setCurrentMinute(0);
     setSummary(''); setMvp('');
     setSimulationSource('llm');
@@ -308,13 +337,32 @@ export default function MatchScreen() {
 
     await supabase.from('matches').update({ status: 'live', simulation_source: 'llm', current_minute: 0, events: [] }).eq('id', matchId);
 
+    let settled = false;
+    const isSettled = () => settled;
+    void playWaitingClock('llm', isSettled);
+
+    const timeoutId = setTimeout(async () => {
+      if (settled) return;
+      settled = true;
+      Alert.alert('LLM yanıtı gecikti', 'Canlı akışın takılmaması için yerel hızlı simülasyona geçiliyor.');
+      await playLocalFallbackSimulation();
+    }, LLM_RESULT_TIMEOUT_MS);
+
     simulateMatch(
       homeSquad, awaySquad,
       usernames[match.home_player_id] ?? 'Ev Sahibi',
       usernames[match.away_player_id] ?? 'Deplasman',
       () => {},
-      async (result) => { await playTimeline(result, 'llm'); },
+      async (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        await playTimeline(result, 'llm', currentMinuteRef.current);
+      },
       async (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
         if (err.startsWith('RATE_LIMIT:')) {
           Alert.alert('Gemini limitine takıldı', 'Geçici olarak yerel hızlı simülasyona geçiliyor.');
           await playLocalFallbackSimulation();
