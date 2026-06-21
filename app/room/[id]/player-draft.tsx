@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   View, Text, FlatList, StyleSheet, Alert, TouchableOpacity, useWindowDimensions, ScrollView,
 } from 'react-native';
-import { useLocalSearchParams, router } from 'expo-router';
+import { useLocalSearchParams, router, type ErrorBoundaryProps } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
 import { createPendingPick, initiateAuction, getCurrentPicker, passPendingPick } from '../../../src/lib/draftEngine';
 import { assignPlayersToFormation, hasCompatibleSlot } from '../../../src/lib/formationUtils';
@@ -16,6 +16,21 @@ import type { FootballPlayer, Auction, Formation, DraftPhase, PendingPick } from
 const PHASE_LABELS: Record<DraftPhase, string> = {
   coach: 'TD', gk: '🧤 Kaleciler', def: '🛡 Savunma', mid: '⚙️ Orta Saha', fwd: '⚡ Forvet',
 };
+
+// Catches render crashes on this route so the user sees a readable error
+// instead of a blank white screen, and we can diagnose the exact cause.
+export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  return (
+    <ScrollView style={errStyles.screen} contentContainerStyle={errStyles.content}>
+      <Text style={errStyles.title}>Bir hata oluştu</Text>
+      <Text style={errStyles.message}>{error?.message ?? 'Bilinmeyen hata'}</Text>
+      {!!error?.stack && <Text style={errStyles.stack}>{error.stack}</Text>}
+      <TouchableOpacity style={errStyles.button} onPress={retry}>
+        <Text style={errStyles.buttonText}>Tekrar Dene</Text>
+      </TouchableOpacity>
+    </ScrollView>
+  );
+}
 
 function FormationPreview({
   formation,
@@ -327,6 +342,16 @@ export default function PlayerDraftScreen() {
     </View>
   );
 }
+
+const errStyles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: '#0f172a' },
+  content: { padding: 20, gap: 12 },
+  title: { color: '#ef4444', fontSize: 18, fontWeight: '900' },
+  message: { color: '#f3f4f6', fontSize: 14 },
+  stack: { color: '#9ca3af', fontSize: 11, fontFamily: 'monospace' },
+  button: { backgroundColor: '#2563eb', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
+  buttonText: { color: '#fff', fontWeight: '800' },
+});
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#0f172a' },
