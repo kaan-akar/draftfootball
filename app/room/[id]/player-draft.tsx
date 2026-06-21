@@ -5,7 +5,7 @@ import {
 import { useLocalSearchParams, router } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
 import { createPendingPick, initiateAuction, getCurrentPicker, passPendingPick } from '../../../src/lib/draftEngine';
-import { assignPlayersToFormation, hasCompatibleSlot, getSlotsForFormation } from '../../../src/lib/formationUtils';
+import { assignPlayersToFormation, hasCompatibleSlot } from '../../../src/lib/formationUtils';
 import PlayerCard from '../../../src/components/PlayerCard';
 import BudgetBar from '../../../src/components/BudgetBar';
 import DraftOrderIndicator from '../../../src/components/DraftOrderIndicator';
@@ -98,6 +98,7 @@ export default function PlayerDraftScreen() {
   const [draftSession, setDraftSession] = useState<any>(null);
   const [pickedPlayerIds, setPickedPlayerIds] = useState<Set<string>>(new Set());
   const [myPickedPlayerIds, setMyPickedPlayerIds] = useState<Set<string>>(new Set());
+  const [picksByUser, setPicksByUser] = useState<Record<string, string[]>>({});
   const [auction, setAuction] = useState<Auction | null>(null);
   const [auctionTarget, setAuctionTarget] = useState<FootballPlayer | null>(null);
   const [pendingPick, setPendingPick] = useState<PendingPick | null>(null);
@@ -137,6 +138,14 @@ export default function PlayerDraftScreen() {
         .map((x: any) => x.football_player_id)
         .filter(Boolean),
     ));
+    // Group every player's picks by user so we can tell which positions each
+    // person has already filled (used to gate auction/objection eligibility).
+    const byUser: Record<string, string[]> = {};
+    (picks ?? []).forEach((x: any) => {
+      if (!x.football_player_id) return;
+      (byUser[x.picker_id] ??= []).push(x.football_player_id);
+    });
+    setPicksByUser(byUser);
     fetchPendingPick();
   }
 
@@ -193,10 +202,17 @@ export default function PlayerDraftScreen() {
   const pgMap: Record<DraftPhase, string> = { coach: 'GK', gk: 'GK', def: 'DEF', mid: 'MID', fwd: 'FWD' };
   const visiblePlayers = allPlayers.filter((p) => p.position_group === pgMap[phase]);
 
+  // A player may only bid on / object to a pick if they can still field that
+  // position. Someone whose compatible slot is already filled (e.g. they have
+  // already secured a goalkeeper) is excluded from the auction and objection.
   const getEligiblePlayerBidders = (player: FootballPlayer) => roomPlayers.filter((p) => {
     if (!p.formation) return false;
-    const slots = getSlotsForFormation(p.formation as Formation);
-    return p.player_budget >= player.price && hasCompatibleSlot(player.positions, slots);
+    if (p.player_budget < player.price) return false;
+    const theirPickedIds = picksByUser[p.user_id] ?? [];
+    const theirPlayers = allPlayers.filter((pl) => theirPickedIds.includes(pl.id));
+    const theirEmptySlots = assignPlayersToFormation(theirPlayers, p.formation as Formation)
+      .filter((slot) => !slot.player);
+    return hasCompatibleSlot(player.positions, theirEmptySlots);
   }).map((p) => p.user_id);
 
   const handleSelect = async (player: FootballPlayer) => {
