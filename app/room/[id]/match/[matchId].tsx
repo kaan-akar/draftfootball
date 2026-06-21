@@ -59,18 +59,26 @@ export default function MatchScreen() {
         const liveMatch = (roomMatches ?? []).find((candidate: any) => candidate.status === 'live');
         if (liveMatch && liveMatch.id !== matchId) {
           router.replace(`/room/${roomId}/match/${liveMatch.id}`);
-          return;
         }
+        // Champion redirect is handled by the game_rooms channel below.
+      })
+      .subscribe();
 
-        const currentMatch = (roomMatches ?? []).find((candidate: any) => candidate.id === matchId);
-        const hasRemainingMatches = (roomMatches ?? []).some((candidate: any) => candidate.status !== 'finished');
-        if (currentMatch?.status === 'finished' && !hasRemainingMatches) {
+    // When the host finishes the tournament, game_rooms.status becomes 'finished'.
+    // All players (including non-host viewers) redirect to the champion screen.
+    const roomStatusChannel = supabase
+      .channel(`room-status-${roomId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'game_rooms', filter: `id=eq.${roomId}` }, ({ new: room }: any) => {
+        if (room?.status === 'finished') {
           router.replace(`/room/${roomId}/champion`);
         }
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(roomChannel); };
+    return () => {
+      supabase.removeChannel(roomChannel);
+      supabase.removeChannel(roomStatusChannel);
+    };
   }, [matchId, roomId]);
 
   function applyMatchState(nextMatch: any) {
@@ -289,6 +297,8 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     const nextMatch = roomMatches.find((candidate: any) => candidate.status === 'scheduled');
 
     if (!nextMatch) {
+      // Tournament over — mark room finished so all players get redirected via game_rooms channel
+      await supabase.from('game_rooms').update({ status: 'finished' }).eq('id', roomId);
       router.replace(`/room/${roomId}/champion`);
       return;
     }
