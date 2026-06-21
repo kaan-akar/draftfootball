@@ -3,6 +3,140 @@ import type { Squad, LLMMatchResponse } from '../types/game';
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const MODEL = 'gemini-2.0-flash';
 
+function scoreSquadStrength(squad: Squad): number {
+  const coachBoost = squad.coach ? squad.coach.price * 1.5 : 0;
+  const playerScore = squad.slots.reduce((total, slot) => total + (slot.player?.price ?? 4), 0);
+  return coachBoost + playerScore;
+}
+
+function randomInt(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function pickRandom<T>(items: T[]): T | undefined {
+  if (items.length === 0) return undefined;
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function pickScorerCandidates(squad: Squad) {
+  const filledPlayers = squad.slots.map((slot) => slot.player).filter(Boolean);
+  const attackers = filledPlayers.filter((player) => player!.position_group === 'FWD');
+  const midfielders = filledPlayers.filter((player) => player!.position_group === 'MID');
+  const defenders = filledPlayers.filter((player) => player!.position_group === 'DEF');
+  return [
+    ...attackers,
+    ...attackers,
+    ...midfielders,
+    ...midfielders,
+    ...defenders,
+  ].filter(Boolean);
+}
+
+export function simulateMatchLocally(
+  homeSquad: Squad,
+  awaySquad: Squad,
+  homeUsername: string,
+  awayUsername: string,
+): LLMMatchResponse {
+  const homeStrength = scoreSquadStrength(homeSquad);
+  const awayStrength = scoreSquadStrength(awaySquad);
+  const totalStrength = Math.max(1, homeStrength + awayStrength);
+  const homeBias = homeStrength / totalStrength;
+
+  const eventCount = randomInt(8, 14);
+  const usedMinutes = new Set<number>();
+  const events: LLMMatchResponse['events'] = [];
+  let homeScore = 0;
+  let awayScore = 0;
+
+  const homeScorers = pickScorerCandidates(homeSquad);
+  const awayScorers = pickScorerCandidates(awaySquad);
+  const genericHome = homeSquad.slots.map((slot) => slot.player?.name).filter(Boolean) as string[];
+  const genericAway = awaySquad.slots.map((slot) => slot.player?.name).filter(Boolean) as string[];
+
+  for (let i = 0; i < eventCount; i += 1) {
+    let minute = randomInt(2, 90);
+    while (usedMinutes.has(minute)) minute = randomInt(2, 90);
+    usedMinutes.add(minute);
+
+    const team = Math.random() < homeBias ? 'home' : 'away';
+    const typeRoll = Math.random();
+
+    if (typeRoll < 0.28) {
+      const scorer = pickRandom(team === 'home' ? homeScorers : awayScorers);
+      const scorerName = scorer?.name ?? (pickRandom(team === 'home' ? genericHome : genericAway) ?? 'Bir oyuncu');
+      events.push({
+        minute,
+        type: 'goal',
+        team,
+        description: `${minute}' ${scorerName} ceza sahasında fırsatı buldu ve topu ağlara gönderdi!`,
+      });
+      if (team === 'home') homeScore += 1;
+      else awayScore += 1;
+      continue;
+    }
+
+    if (typeRoll < 0.45) {
+      const playerName = pickRandom(team === 'home' ? genericHome : genericAway) ?? 'Bir oyuncu';
+      events.push({
+        minute,
+        type: 'chance',
+        team,
+        description: `${minute}' ${playerName} tehlikeli geldi ama son vuruşta isabeti bulamadı.`,
+      });
+      continue;
+    }
+
+    if (typeRoll < 0.62) {
+      const playerName = pickRandom(team === 'home' ? genericHome : genericAway) ?? 'Kaleci';
+      events.push({
+        minute,
+        type: 'save',
+        team,
+        description: `${minute}' ${playerName} kritik anda takımını oyunda tuttu.`,
+      });
+      continue;
+    }
+
+    if (typeRoll < 0.83) {
+      const playerName = pickRandom(team === 'home' ? genericHome : genericAway) ?? 'Bir oyuncu';
+      events.push({
+        minute,
+        type: 'action',
+        team,
+        description: `${minute}' ${playerName} orta sahada oyunun temposunu belirleyen önemli bir aksiyon yaptı.`,
+      });
+      continue;
+    }
+
+    const playerName = pickRandom(team === 'home' ? genericHome : genericAway) ?? 'Bir oyuncu';
+    events.push({
+      minute,
+      type: 'yellow_card',
+      team,
+      description: `${minute}' ${playerName} sert müdahalesi sonrası sarı kart gördü.`,
+    });
+  }
+
+  events.sort((a, b) => a.minute - b.minute);
+
+  const mvpPool = [
+    ...Array(Math.max(homeScore, 1)).fill(pickRandom(homeScorers)?.name ?? pickRandom(genericHome) ?? homeUsername),
+    ...Array(Math.max(awayScore, 1)).fill(pickRandom(awayScorers)?.name ?? pickRandom(genericAway) ?? awayUsername),
+  ].filter(Boolean) as string[];
+  const mvp = pickRandom(mvpPool) ?? homeUsername;
+
+  const summary = `${homeUsername} ile ${awayUsername} arasındaki maç ${homeScore}-${awayScore} sonuçlandı. ${mvp} maçın öne çıkan ismiydi. Karşılaşma hızlı tempoda geçti ve iki takım da üretken anlar buldu.`;
+
+  return {
+    events,
+    home_score: homeScore,
+    away_score: awayScore,
+    summary,
+    mvp,
+  };
+}
+
 function buildMatchPrompt(homeSquad: Squad, awaySquad: Squad, homeUsername: string, awayUsername: string): string {
   const formatSquad = (squad: Squad, username: string) => {
     const slotLines = squad.slots
@@ -74,6 +208,10 @@ export async function simulateMatch(
 
     if (!response.ok) {
       const errText = await response.text();
+      if (response.status === 429) {
+        onError(`RATE_LIMIT:${errText}`);
+        return;
+      }
       onError(`Gemini API hatası: ${response.status} — ${errText}`);
       return;
     }
