@@ -409,10 +409,14 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     if (llmResult) {
       await playTimeline(llmResult, 'llm');
     } else {
-      // LLM failed — fall back to local
-      setSimulationSource('local');
-      const localResult = simulateMatchLocally(homeSquad, awaySquad, homeUsername, awayUsername);
-      await playTimeline(localResult, 'local');
+      // LLM failed — reset match and show error
+      isPlayingRef.current = false;
+      setIsLive(false);
+      await supabase.from('matches').update({
+        status: 'scheduled', simulation_source: null, current_minute: 0, events: [],
+      }).eq('id', matchId);
+      Alert.alert('LLM Hatası', 'Yapay zeka maçı simüle edemedi. İnternet bağlantınızı kontrol edin ve tekrar deneyin.');
+      return;
     }
 
     isPlayingRef.current = false;

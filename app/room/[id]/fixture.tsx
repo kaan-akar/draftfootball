@@ -20,11 +20,16 @@ export default function FixtureScreen() {
   async function fetchData() {
     const [{ data: m }, { data: rp }, { data: room }] = await Promise.all([
       supabase.from('matches').select('*').eq('room_id', roomId).order('round'),
-      supabase.from('room_players').select('user_id,username').eq('room_id', roomId),
+      supabase.from('room_players').select('user_id, username, profiles(username)').eq('room_id', roomId),
       supabase.from('game_rooms').select('host_id').eq('id', roomId).single(),
     ]);
     setMatches(m ?? []);
-    setUsernames(Object.fromEntries((rp ?? []).map((p: any) => [p.user_id, p.username])));
+    setUsernames(Object.fromEntries(
+      (rp ?? []).map((p: any) => [
+        p.user_id,
+        p.username || p.profiles?.username || p.user_id?.slice(0, 6) || '?',
+      ]),
+    ));
     const uid = (await supabase.auth.getSession()).data.session?.user.id ?? '';
     setIsHost(room?.host_id === uid);
 
