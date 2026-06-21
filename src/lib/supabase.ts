@@ -16,14 +16,12 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 export async function signUp(email: string, password: string, username: string) {
-  const { data, error } = await supabase.auth.signUp({ email, password });
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: { data: { username } },
+  });
   if (error) throw error;
-  if (data.user) {
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .insert({ id: data.user.id, username });
-    if (profileError) throw profileError;
-  }
   return data;
 }
 
