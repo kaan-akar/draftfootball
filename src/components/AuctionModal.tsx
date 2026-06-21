@@ -21,9 +21,14 @@ export default function AuctionModal({ auction, myUserId, myBudget, targetName, 
 
   if (!auction || auction.status !== 'active') return null;
 
-  const currentBidder = auction.eligible_bidders[auction.current_bidder_index % auction.eligible_bidders.length];
+  // Defensive: eligible_bidders may arrive empty/undefined from a partial write.
+  // Reading .length on undefined here would crash the whole screen (white page).
+  const eligibleBidders = auction.eligible_bidders ?? [];
+  const currentBidder = eligibleBidders.length > 0
+    ? eligibleBidders[auction.current_bidder_index % eligibleBidders.length]
+    : undefined;
   const isMyTurn = currentBidder === myUserId;
-  const minBid = auction.current_highest_bid + 1;
+  const minBid = (auction.current_highest_bid ?? 0) + 1;
 
   const handleBid = async () => {
     const amount = parseInt(bidAmount, 10);
@@ -56,7 +61,7 @@ export default function AuctionModal({ auction, myUserId, myBudget, targetName, 
               : ' (henüz teklif yok)'}
           </Text>
           <Text style={styles.turn}>
-            Sıra: <Text style={styles.turnName}>{usernames[currentBidder] ?? '?'}</Text>
+            Sıra: <Text style={styles.turnName}>{(currentBidder ? usernames[currentBidder] : undefined) ?? '?'}</Text>
             {isMyTurn ? ' (SEN!)' : ''}
           </Text>
 

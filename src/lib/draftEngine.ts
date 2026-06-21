@@ -120,10 +120,13 @@ export async function initiateAuction(
     .eq('room_id', pendingPick.room_id)
     .eq('user_id', initiatedBy);
 
-  const orderedBidders = [
+  // Picker is always first; the objector who started the auction must always be
+  // able to bid; then the rest of the eligible bidders. Deduplicated.
+  const orderedBidders = [...new Set([
     pendingPick.picker_id,
-    ...eligibleBidders.filter((userId) => userId !== pendingPick.picker_id),
-  ];
+    initiatedBy,
+    ...eligibleBidders,
+  ])].filter(Boolean);
 
   await supabase.from('pending_picks').update({
     status: 'auctioning',
