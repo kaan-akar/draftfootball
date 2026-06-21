@@ -5,7 +5,7 @@ import {
 import { useLocalSearchParams, router, type ErrorBoundaryProps } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
 import { createPendingPick, initiateAuction, getCurrentPicker, passPendingPick } from '../../../src/lib/draftEngine';
-import { assignPlayersToFormation, hasCompatibleSlot } from '../../../src/lib/formationUtils';
+import { assignPlayersToFormation, hasCompatibleSlot, phaseForRound } from '../../../src/lib/formationUtils';
 import PlayerCard from '../../../src/components/PlayerCard';
 import BudgetBar from '../../../src/components/BudgetBar';
 import DraftOrderIndicator from '../../../src/components/DraftOrderIndicator';
@@ -129,18 +129,20 @@ export default function PlayerDraftScreen() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` }, fetchAll)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'draft_picks', filter: `room_id=eq.${roomId}` }, fetchAll)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'game_rooms', filter: `id=eq.${roomId}` }, handleRoomChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'auctions', filter: `room_id=eq.${roomId}` }, fetchAuction)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pending_picks', filter: `room_id=eq.${roomId}` }, fetchPendingPick)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'auctions', filter: `room_id=eq.${roomId}` }, fetchAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pending_picks', filter: `room_id=eq.${roomId}` }, fetchAll)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [roomId]);
 
   async function fetchAll() {
-    const [{ data: p }, { data: rp }, { data: ds }, { data: picks }] = await Promise.all([
+    const [{ data: p }, { data: rp }, { data: ds }, { data: picks }, { data: pending }, { data: activeAuction }] = await Promise.all([
       supabase.from('football_players').select('*').order('price', { ascending: false }),
       supabase.from('room_players').select('*').eq('room_id', roomId),
       supabase.from('draft_sessions').select('*').eq('room_id', roomId).single(),
       supabase.from('draft_picks').select('football_player_id,picker_id').eq('room_id', roomId).not('football_player_id', 'is', null),
+      supabase.from('pending_picks').select('*').eq('room_id', roomId).in('status', ['active', 'auctioning']).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+      supabase.from('auctions').select('*').eq('room_id', roomId).eq('status', 'active').maybeSingle(),
     ]);
     setAllPlayers((p ?? []) as FootballPlayer[]);
     setRoomPlayers(rp ?? []);
@@ -161,31 +163,21 @@ export default function PlayerDraftScreen() {
       (byUser[x.picker_id] ??= []).push(x.football_player_id);
     });
     setPicksByUser(byUser);
-    fetchPendingPick();
-  }
 
-  async function fetchPendingPick() {
-    const { data } = await supabase.from('pending_picks').select('*')
-      .eq('room_id', roomId)
-      .in('status', ['active', 'auctioning'])
-      .limit(1)
-      .maybeSingle();
-    setPendingPick((data as PendingPick | null) ?? null);
-    if (data?.football_player_id) {
-      const { data: player } = await supabase.from('football_players').select('*').eq('id', data.football_player_id).single();
+    setPendingPick((pending as PendingPick | null) ?? null);
+    if (pending?.football_player_id) {
+      const { data: player } = await supabase.from('football_players').select('*').eq('id', pending.football_player_id).single();
       setPendingTarget((player as FootballPlayer) ?? null);
-      return;
+    } else {
+      setPendingTarget(null);
     }
-    setPendingTarget(null);
-  }
 
-  async function fetchAuction() {
-    const { data } = await supabase.from('auctions').select('*')
-      .eq('room_id', roomId).eq('status', 'active').maybeSingle();
-    setAuction(data as Auction | null);
-    if (data?.target_player_id) {
-      const { data: pl } = await supabase.from('football_players').select('*').eq('id', data.target_player_id).single();
+    setAuction((activeAuction as Auction | null) ?? null);
+    if (activeAuction?.target_player_id) {
+      const { data: pl } = await supabase.from('football_players').select('*').eq('id', activeAuction.target_player_id).single();
       setAuctionTarget(pl as FootballPlayer);
+    } else {
+      setAuctionTarget(null);
     }
   }
 
@@ -193,8 +185,9 @@ export default function PlayerDraftScreen() {
     if (r?.status === 'squad_review') router.replace(`/room/${roomId}/squad-review`);
   }
 
-  const phase: DraftPhase = draftSession?.current_phase ?? 'gk';
   const round: number = draftSession?.current_round ?? 1;
+  // Round is the source of truth for which position group is being drafted.
+  const phase: DraftPhase = phaseForRound(round);
   const currentPickerUserId = draftSession
     ? getCurrentPicker(draftSession.pick_order, round, draftSession.current_picker_index)
     : null;
@@ -243,12 +236,14 @@ export default function PlayerDraftScreen() {
         .filter((p) => p.user_id !== myUserId && p.objection_rights > 0 && eligibleBidders.includes(p.user_id))
         .map((p) => p.user_id);
       await createPendingPick(roomId, myUserId, player.id, false, player.price, phase, round, eligibleObjectors);
+      await fetchAll();
     } catch (e: any) { Alert.alert('Hata', e.message); }
   };
 
   const handlePassPendingPick = async () => {
     try {
       if (pendingPick) await passPendingPick(pendingPick.id, myUserId);
+      await fetchAll();
     } catch (e: any) { Alert.alert('Hata', e.message); }
   };
 
@@ -256,6 +251,7 @@ export default function PlayerDraftScreen() {
     if (!pendingPick || !pendingTarget) return;
     try {
       await initiateAuction(pendingPick.id, myUserId, getEligiblePlayerBidders(pendingTarget));
+      await fetchAll();
     } catch (e: any) { Alert.alert('Hata', e.message); }
   };
 
