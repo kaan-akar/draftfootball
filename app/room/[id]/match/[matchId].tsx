@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert, TextInput,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { supabase } from '../../../../src/lib/supabase';
@@ -8,9 +8,8 @@ import { simulateMatch, resetMatchSimulator } from '../../../../src/lib/matchSim
 import { getSlotsForFormation } from '../../../../src/lib/formationUtils';
 import MatchEventFeed from '../../../../src/components/MatchEventFeed';
 import type { Squad, MatchEvent, Formation } from '../../../../src/types/game';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const GEMINI_KEY_STORAGE = 'gemini_api_key';
+const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY?.trim() ?? '';
 
 export default function MatchScreen() {
   const { id: roomId, matchId } = useLocalSearchParams<{ id: string; matchId: string }>();
@@ -23,13 +22,9 @@ export default function MatchScreen() {
   const [isLive, setIsLive] = useState(false);
   const [summary, setSummary] = useState('');
   const [mvp, setMvp] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [showKeyInput, setShowKeyInput] = useState(false);
-  const [tempKey, setTempKey] = useState('');
   const [usernames, setUsernames] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    AsyncStorage.getItem(GEMINI_KEY_STORAGE).then((k) => { if (k) setApiKey(k); });
     fetchMatch();
   }, [matchId]);
 
@@ -80,15 +75,11 @@ export default function MatchScreen() {
     }
   }
 
-  const saveApiKey = async () => {
-    if (!tempKey.trim()) return;
-    await AsyncStorage.setItem(GEMINI_KEY_STORAGE, tempKey.trim());
-    setApiKey(tempKey.trim());
-    setShowKeyInput(false);
-  };
-
   const startSimulation = async () => {
-    if (!apiKey) { setShowKeyInput(true); return; }
+    if (!GEMINI_API_KEY) {
+      Alert.alert('Gemini API key eksik', '.env dosyasinda EXPO_PUBLIC_GEMINI_API_KEY tanimli olmali.');
+      return;
+    }
     if (!homeSquad || !awaySquad) { Alert.alert('Kadrolar yüklenemedi'); return; }
 
     resetMatchSimulator();
@@ -103,7 +94,7 @@ export default function MatchScreen() {
       homeSquad, awaySquad,
       usernames[match.home_player_id] ?? 'Ev Sahibi',
       usernames[match.away_player_id] ?? 'Deplasman',
-      apiKey,
+      GEMINI_API_KEY,
       (event) => { setEvents((prev) => [...prev, event]); },
       async (result) => {
         setHomeScore(result.home_score);
@@ -148,62 +139,38 @@ export default function MatchScreen() {
 
   return (
     <View style={styles.screen}>
-      {showKeyInput ? (
-        <View style={styles.keyModal}>
-          <Text style={styles.keyTitle}>Gemini API Key</Text>
-          <Text style={styles.keyDesc}>Google AI Studio'dan ücretsiz key alabilirsin: aistudio.google.com</Text>
-          <TextInput
-            style={styles.keyInput}
-            placeholder="AIza..."
-            placeholderTextColor="#6b7280"
-            value={tempKey}
-            onChangeText={setTempKey}
-            secureTextEntry
-          />
-          <TouchableOpacity style={styles.keyBtn} onPress={saveApiKey}>
-            <Text style={styles.keyBtnText}>Kaydet ve Devam Et</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setShowKeyInput(false)}>
-            <Text style={styles.cancel}>İptal</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <>
-          <MatchEventFeed
-            events={events}
-            homeUsername={usernames[match?.home_player_id] ?? 'Ev Sahibi'}
-            awayUsername={usernames[match?.away_player_id] ?? 'Deplasman'}
-            homeScore={homeScore}
-            awayScore={awayScore}
-            isLive={isLive}
-          />
+      <>
+        <MatchEventFeed
+          events={events}
+          homeUsername={usernames[match?.home_player_id] ?? 'Ev Sahibi'}
+          awayUsername={usernames[match?.away_player_id] ?? 'Deplasman'}
+          homeScore={homeScore}
+          awayScore={awayScore}
+          isLive={isLive}
+        />
 
-          {summary ? (
-            <View style={styles.summaryBox}>
-              <Text style={styles.summaryTitle}>Maç Özeti</Text>
-              <Text style={styles.summaryText}>{summary}</Text>
-              <Text style={styles.mvp}>⭐ MVP: {mvp}</Text>
-            </View>
-          ) : null}
-
-          <View style={styles.footer}>
-            {!isFinished && !isLive && (
-              <TouchableOpacity style={styles.startBtn} onPress={startSimulation}>
-                <Text style={styles.startBtnText}>▶ Maçı Başlat</Text>
-              </TouchableOpacity>
-            )}
-            {isLive && <Text style={styles.simulating}>🔄 Simüle ediliyor...</Text>}
-            {isFinished && (
-              <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-                <Text style={styles.backBtnText}>← Fikstüre Dön</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity onPress={() => setShowKeyInput(true)}>
-              <Text style={styles.changeKey}>🔑 API Key</Text>
-            </TouchableOpacity>
+        {summary ? (
+          <View style={styles.summaryBox}>
+            <Text style={styles.summaryTitle}>Maç Özeti</Text>
+            <Text style={styles.summaryText}>{summary}</Text>
+            <Text style={styles.mvp}>⭐ MVP: {mvp}</Text>
           </View>
-        </>
-      )}
+        ) : null}
+
+        <View style={styles.footer}>
+          {!isFinished && !isLive && (
+            <TouchableOpacity style={styles.startBtn} onPress={startSimulation}>
+              <Text style={styles.startBtnText}>▶ Maçı Başlat</Text>
+            </TouchableOpacity>
+          )}
+          {isLive && <Text style={styles.simulating}>🔄 Simüle ediliyor...</Text>}
+          {isFinished && (
+            <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+              <Text style={styles.backBtnText}>← Fikstüre Dön</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </>
     </View>
   );
 }
@@ -220,12 +187,4 @@ const styles = StyleSheet.create({
   simulating: { color: '#9ca3af', flex: 1, textAlign: 'center' },
   backBtn: { flex: 1, backgroundColor: '#1f2937', borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
   backBtnText: { color: '#60a5fa', fontWeight: '700' },
-  changeKey: { color: '#6b7280', fontSize: 12 },
-  keyModal: { flex: 1, justifyContent: 'center', padding: 24 },
-  keyTitle: { color: '#f3f4f6', fontWeight: '900', fontSize: 20, textAlign: 'center', marginBottom: 8 },
-  keyDesc: { color: '#9ca3af', fontSize: 13, textAlign: 'center', marginBottom: 24, lineHeight: 20 },
-  keyInput: { backgroundColor: '#1f2937', color: '#f3f4f6', borderRadius: 10, padding: 14, fontSize: 14, marginBottom: 12 },
-  keyBtn: { backgroundColor: '#22c55e', borderRadius: 10, paddingVertical: 14, alignItems: 'center', marginBottom: 8 },
-  keyBtnText: { color: '#0f172a', fontWeight: '900' },
-  cancel: { color: '#6b7280', textAlign: 'center' },
 });
