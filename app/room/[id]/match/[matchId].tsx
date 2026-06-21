@@ -76,12 +76,19 @@ export default function MatchScreen() {
   // Team names are derived from the match + usernames, never stored as their own
   // state. This prevents the host scoreboard from oscillating between the real
   // names and the "Ev Sahibi / Deplasman" defaults during live playback.
+  // We also keep the last resolved names in a ref so that a transient empty
+  // `usernames` snapshot (e.g. during a refetch) never flips the labels back to
+  // the defaults — that flip is what looked like the screen "going back and
+  // forth" between real names and "Ev Sahibi / Deplasman".
+  const lastNamesRef = useRef<{ home: string; away: string }>({ home: '', away: '' });
   const displayNames = useMemo(() => {
     const homeName = match?.home_player_id ? usernames[match.home_player_id] : undefined;
     const awayName = match?.away_player_id ? usernames[match.away_player_id] : undefined;
+    if (homeName) lastNamesRef.current.home = homeName;
+    if (awayName) lastNamesRef.current.away = awayName;
     return {
-      home: homeName || 'Ev Sahibi',
-      away: awayName || 'Deplasman',
+      home: homeName || lastNamesRef.current.home || 'Ev Sahibi',
+      away: awayName || lastNamesRef.current.away || 'Deplasman',
     };
   }, [match?.home_player_id, match?.away_player_id, usernames]);
 
@@ -251,17 +258,19 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
   }
 
   async function fetchMatch() {
-    const [{ data: m }, { data: room }] = await Promise.all([
+    const [{ data: m }, { data: room }, { data: rp }] = await Promise.all([
       supabase.from('matches').select('*').eq('id', matchId).single(),
       supabase.from('game_rooms').select('host_id').eq('id', roomId).single(),
-    ]);
-    applyMatchState(m);
-
-    const [{ data: rp }] = await Promise.all([
       supabase.from('room_players').select('user_id,username,formation,picked_coach_id').eq('room_id', roomId),
     ]);
+
+    // Populate usernames BEFORE applying the match so the derived team names are
+    // already resolved on the first render that has match data — otherwise the
+    // labels briefly show "Ev Sahibi / Deplasman" and then flip to real names.
     const unmap = Object.fromEntries((rp ?? []).map((p: any) => [p.user_id, p.username]));
     setUsernames(unmap);
+    applyMatchState(m);
+
     const uid = (await supabase.auth.getSession()).data.session?.user.id ?? '';
     setIsHost(room?.host_id === uid);
 
