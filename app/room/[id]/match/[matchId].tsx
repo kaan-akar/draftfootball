@@ -5,11 +5,49 @@ import {
 import { useLocalSearchParams, router } from 'expo-router';
 import { supabase } from '../../../../src/lib/supabase';
 import { simulateMatch, simulateMatchLocally, resetMatchSimulator } from '../../../../src/lib/matchSimulator';
-import { getSlotsForFormation } from '../../../../src/lib/formationUtils';
+import { assignPlayersToFormation } from '../../../../src/lib/formationUtils';
 import MatchEventFeed from '../../../../src/components/MatchEventFeed';
 import type { Squad, MatchEvent, Formation, MatchSimulationSource } from '../../../../src/types/game';
 
 const SIMULATION_MINUTE_MS = 1000;
+
+const MatchLineups = React.memo(({
+  homeSquad,
+  awaySquad,
+  displayNames,
+}: {
+  homeSquad: Squad | null;
+  awaySquad: Squad | null;
+  displayNames: { home: string; away: string };
+}) => {
+  if (!homeSquad || !awaySquad) return null;
+
+  return (
+    <View style={styles.lineupBox}>
+      {(['home', 'away'] as const).map((side) => {
+        const squad = side === 'home' ? homeSquad : awaySquad;
+        const name = side === 'home' ? displayNames.home : displayNames.away;
+        return (
+          <View key={side} style={styles.lineupCol}>
+            <Text style={styles.lineupTeam} numberOfLines={1}>{name}</Text>
+            <Text style={styles.lineupFormation}>{squad.formation}</Text>
+            {squad.coach ? (
+              <Text style={styles.lineupCoach} numberOfLines={1}>🧑‍🏫 {squad.coach.name}</Text>
+            ) : null}
+            {squad.slots.map((slot) => (
+              <View key={slot.slotId} style={styles.lineupRow}>
+                <Text style={styles.lineupSlot}>{slot.position}</Text>
+                <Text style={styles.lineupPlayer} numberOfLines={1}>
+                  {slot.player?.name ?? '—'}
+                </Text>
+              </View>
+            ))}
+          </View>
+        );
+      })}
+    </View>
+  );
+});
 
 export default function MatchScreen() {
   const { id: roomId, matchId } = useLocalSearchParams<{ id: string; matchId: string }>();
@@ -230,12 +268,7 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
       const { data: footballPlayers } = await supabase.from('football_players').select('*').in('id', playerIds);
 
       const formation = player.formation as Formation;
-      const slots = getSlotsForFormation(formation).map((slot) => ({
-        ...slot,
-        player: (footballPlayers ?? []).find((fp: any) =>
-          fp.positions?.some((pos: string) => pos === slot.position)
-        ),
-      }));
+      const slots = assignPlayersToFormation(footballPlayers ?? [], formation);
 
       return {
         userId,
@@ -456,8 +489,9 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
   }, [autostart, isHost, isLive, isFinished, homeSquad, awaySquad, match]);
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
-      <View style={styles.feedWrapper}>
+    <View style={styles.screen}>
+      <View style={styles.feedShell}>
+        <View style={styles.feedWrapper}>
         <MatchEventFeed
           events={events}
           homeUsername={displayNames.home}
@@ -468,82 +502,60 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
           currentMinuteRef={currentMinuteRef}
           isLive={isLive}
         />
+        </View>
       </View>
 
-      {/* İlk 11 — her zaman görünür */}
-      {homeSquad && awaySquad && (
-        <View style={styles.lineupBox}>
-          {(['home', 'away'] as const).map((side) => {
-            const squad = side === 'home' ? homeSquad : awaySquad;
-            const name = side === 'home' ? displayNames.home : displayNames.away;
-            return (
-              <View key={side} style={styles.lineupCol}>
-                <Text style={styles.lineupTeam} numberOfLines={1}>{name}</Text>
-                <Text style={styles.lineupFormation}>{squad.formation}</Text>
-                {squad.coach ? (
-                  <Text style={styles.lineupCoach} numberOfLines={1}>🧑‍🏫 {squad.coach.name}</Text>
-                ) : null}
-                {(['GK', 'DEF', 'MID', 'FWD'] as const).map((group) => {
-                  const players = squad.slots.filter((s) => s.player?.position_group === group);
-                  if (!players.length) return null;
-                  return (
-                    <View key={group}>
-                      <Text style={styles.lineupGroup}>{group}</Text>
-                      {players.map((s) => (
-                        <Text key={s.slotId} style={styles.lineupPlayer} numberOfLines={1}>
-                          {s.player?.name ?? '—'}
-                        </Text>
-                      ))}
-                    </View>
-                  );
-                })}
-              </View>
-            );
-          })}
+      <ScrollView style={styles.detailsScroll} contentContainerStyle={styles.container}>
+        <MatchLineups
+          homeSquad={homeSquad}
+          awaySquad={awaySquad}
+          displayNames={displayNames}
+        />
+
+        {summary ? (
+          <View style={styles.summaryBox}>
+            <Text style={styles.summaryTitle}>Maç Özeti</Text>
+            <Text style={styles.summaryText}>{summary}</Text>
+            <Text style={styles.mvp}>⭐ MVP: {mvp}</Text>
+          </View>
+        ) : null}
+
+        {(isLive || isFinished) && simulationSourceLabel ? (
+          <Text style={styles.simulationNote}>Bu maç {simulationSourceLabel.toLowerCase()} ile oynatıldı.</Text>
+        ) : null}
+
+        <View style={styles.footer}>
+          {!isFinished && !isLive && !isSimulating && (
+            <TouchableOpacity style={styles.startBtn} onPress={startSimulation}>
+              <Text style={styles.startBtnText}>▶ Maçı Başlat</Text>
+            </TouchableOpacity>
+          )}
+          {isSimulating && <Text style={styles.simulating}>⏳ LLM maç simüle ediyor...</Text>}
+          {isLive && <Text style={styles.simulating}>🔄 Simüle ediliyor...</Text>}
+          {isFinished && isHost && (
+            <TouchableOpacity style={styles.startBtn} onPress={startNextMatchInQueue}>
+              <Text style={styles.startBtnText}>➡ Devam Et</Text>
+            </TouchableOpacity>
+          )}
+          {isFinished && !isHost && (
+            <Text style={styles.simulating}>Host maçı okuyuyor, bekleniyor...</Text>
+          )}
+          {isFinished && (
+            <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+              <Text style={styles.backBtnText}>← Fikstüre Dön</Text>
+            </TouchableOpacity>
+          )}
         </View>
-      )}
-
-      {summary ? (
-        <View style={styles.summaryBox}>
-          <Text style={styles.summaryTitle}>Maç Özeti</Text>
-          <Text style={styles.summaryText}>{summary}</Text>
-          <Text style={styles.mvp}>⭐ MVP: {mvp}</Text>
-        </View>
-      ) : null}
-
-      {(isLive || isFinished) && simulationSourceLabel ? (
-        <Text style={styles.simulationNote}>Bu maç {simulationSourceLabel.toLowerCase()} ile oynatıldı.</Text>
-      ) : null}
-
-      <View style={styles.footer}>
-        {!isFinished && !isLive && !isSimulating && (
-          <TouchableOpacity style={styles.startBtn} onPress={startSimulation}>
-            <Text style={styles.startBtnText}>▶ Maçı Başlat</Text>
-          </TouchableOpacity>
-        )}
-        {isSimulating && <Text style={styles.simulating}>⏳ LLM maç simüle ediyor...</Text>}
-        {isLive && <Text style={styles.simulating}>🔄 Simüle ediliyor...</Text>}
-        {isFinished && isHost && (
-          <TouchableOpacity style={styles.startBtn} onPress={startNextMatchInQueue}>
-            <Text style={styles.startBtnText}>➡ Devam Et</Text>
-          </TouchableOpacity>
-        )}
-        {isFinished && !isHost && (
-          <Text style={styles.simulating}>Host maçı okuyuyor, bekleniyor...</Text>
-        )}
-        {isFinished && (
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Text style={styles.backBtnText}>← Fikstüre Dön</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#0f172a' },
-  container: { padding: 16, paddingBottom: 32 },
+  feedShell: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
+  detailsScroll: { flex: 1 },
+  container: { paddingHorizontal: 16, paddingBottom: 32 },
   feedWrapper: { height: 340 },
   lineupBox: {
     flexDirection: 'row', backgroundColor: '#1f2937', borderRadius: 10,
@@ -553,8 +565,9 @@ const styles = StyleSheet.create({
   lineupTeam: { color: '#f3f4f6', fontWeight: '900', fontSize: 13, marginBottom: 2 },
   lineupFormation: { color: '#60a5fa', fontSize: 11, marginBottom: 2 },
   lineupCoach: { color: '#a78bfa', fontSize: 11, marginBottom: 6 },
-  lineupGroup: { color: '#6b7280', fontSize: 10, fontWeight: '700', marginTop: 4, letterSpacing: 1 },
-  lineupPlayer: { color: '#d1d5db', fontSize: 12, paddingVertical: 1 },
+  lineupRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 1 },
+  lineupSlot: { color: '#6b7280', fontSize: 10, fontWeight: '700', width: 28 },
+  lineupPlayer: { color: '#d1d5db', fontSize: 12, flex: 1 },
   summaryBox: { backgroundColor: '#1f2937', borderRadius: 10, padding: 14, marginTop: 8 },
   summaryTitle: { color: '#f3f4f6', fontWeight: '700', marginBottom: 6 },
   summaryText: { color: '#9ca3af', fontSize: 13, lineHeight: 20 },

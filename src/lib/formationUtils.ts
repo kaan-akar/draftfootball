@@ -1,4 +1,4 @@
-import type { Formation, DetailedPosition, FormationSlot } from '../types/game';
+import type { Formation, DetailedPosition, FormationSlot, FootballPlayer } from '../types/game';
 
 // ─── Formation Slot Definitions ──────────────────────────────────────────────
 const FORMATION_SLOTS: Record<Formation, DetailedPosition[]> = {
@@ -65,6 +65,65 @@ export function hasCompatibleSlot(
   emptySlots: FormationSlot[],
 ): boolean {
   return emptySlots.some((slot) => canFillSlot(playerPositions, slot.position));
+}
+
+function getSlotFitScore(
+  playerPositions: DetailedPosition[],
+  slotPosition: DetailedPosition,
+): number {
+  const compatible = SLOT_COMPAT[slotPosition];
+  return playerPositions.reduce((bestScore, position) => {
+    const idx = compatible.indexOf(position);
+    if (idx === -1) return bestScore;
+    return Math.max(bestScore, compatible.length - idx);
+  }, -1);
+}
+
+export function assignPlayersToFormation(
+  players: FootballPlayer[],
+  formation: Formation,
+): Array<FormationSlot & { player?: FootballPlayer }> {
+  const slots = getSlotsForFormation(formation);
+  const remainingPlayers = [...players];
+  const assignedPlayersBySlot = new Map<string, FootballPlayer | undefined>();
+  const openSlots = [...slots];
+
+  while (openSlots.length > 0) {
+    const slotWithFewestOptions = [...openSlots]
+      .map((slot) => ({
+        slot,
+        candidates: remainingPlayers.filter((player) => canFillSlot(player.positions, slot.position)),
+      }))
+      .sort((left, right) => {
+        if (left.candidates.length !== right.candidates.length) {
+          return left.candidates.length - right.candidates.length;
+        }
+        return SLOT_COMPAT[left.slot.position].length - SLOT_COMPAT[right.slot.position].length;
+      })[0];
+
+    const slotIndex = openSlots.findIndex((slot) => slot.slotId === slotWithFewestOptions.slot.slotId);
+    const [nextSlot] = openSlots.splice(slotIndex, 1);
+
+    const rankedCandidates = slotWithFewestOptions.candidates.sort((left, right) => {
+      const scoreDiff = getSlotFitScore(right.positions, nextSlot.position)
+        - getSlotFitScore(left.positions, nextSlot.position);
+      if (scoreDiff !== 0) return scoreDiff;
+      return (right.price ?? 0) - (left.price ?? 0);
+    });
+
+    const selectedPlayer = rankedCandidates[0];
+    assignedPlayersBySlot.set(nextSlot.slotId, selectedPlayer);
+
+    if (selectedPlayer) {
+      const playerIndex = remainingPlayers.findIndex((player) => player.id === selectedPlayer.id);
+      if (playerIndex !== -1) remainingPlayers.splice(playerIndex, 1);
+    }
+  }
+
+  return slots.map((slot) => ({
+    ...slot,
+    player: assignedPlayersBySlot.get(slot.slotId),
+  }));
 }
 
 /**
