@@ -28,6 +28,7 @@ export default function MatchScreen() {
   const [usernames, setUsernames] = useState<Record<string, string>>({});
   const [isHost, setIsHost] = useState(false);
   const currentMinuteRef = useRef(0);
+  const eventsRef = useRef<MatchEvent[]>([]);
 
   useEffect(() => {
     fetchMatch();
@@ -68,12 +69,23 @@ export default function MatchScreen() {
   }, [matchId, roomId]);
 
   function applyMatchState(nextMatch: any) {
+    const nextMinute = nextMatch?.current_minute ?? 0;
+    const nextEvents = nextMatch?.events ?? [];
+    if (nextMatch?.status === 'live') {
+      const hasOlderMinute = nextMinute < currentMinuteRef.current;
+      const hasFewerEvents = nextEvents.length < eventsRef.current.length;
+      if (hasOlderMinute || hasFewerEvents) {
+        return;
+      }
+    }
+
     setMatch(nextMatch);
     setHomeScore(nextMatch?.home_score ?? 0);
     setAwayScore(nextMatch?.away_score ?? 0);
-    currentMinuteRef.current = nextMatch?.current_minute ?? 0;
-    setCurrentMinute(nextMatch?.current_minute ?? 0);
-    setEvents(nextMatch?.events ?? []);
+    currentMinuteRef.current = nextMinute;
+    eventsRef.current = nextEvents;
+    setCurrentMinute(nextMinute);
+    setEvents(nextEvents);
     setSummary(nextMatch?.summary ?? '');
     setMvp(nextMatch?.mvp ?? '');
     setSimulationSource(nextMatch?.simulation_source ?? null);
@@ -104,16 +116,22 @@ export default function MatchScreen() {
     await persistPlaybackSnapshot(nextEvents, source, minute);
   }
 
-  async function persistPlaybackSnapshot(
+  function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
+    const score = calculateLiveScore(nextEvents);
+    eventsRef.current = nextEvents;
+    setEvents(nextEvents);
+    setHomeScore(score.home);
+    setAwayScore(score.away);
+    currentMinuteRef.current = minute;
+    setCurrentMinute(minute);
+  }
+
+  async function publishPlaybackSnapshot(
     nextEvents: MatchEvent[],
     source: MatchSimulationSource | null,
     minute: number,
   ) {
     const score = calculateLiveScore(nextEvents);
-    setHomeScore(score.home);
-    setAwayScore(score.away);
-    currentMinuteRef.current = minute;
-    setCurrentMinute(minute);
 
     await supabase.from('matches').update({
       status: 'live',
@@ -123,6 +141,15 @@ export default function MatchScreen() {
       away_score: score.away,
       events: nextEvents,
     }).eq('id', matchId);
+  }
+
+  async function persistPlaybackSnapshot(
+    nextEvents: MatchEvent[],
+    source: MatchSimulationSource | null,
+    minute: number,
+  ) {
+    syncPlaybackState(nextEvents, minute);
+    await publishPlaybackSnapshot(nextEvents, source, minute);
   }
 
   async function playLocalFallbackSimulation() {
@@ -271,12 +298,15 @@ export default function MatchScreen() {
     let shownEvents: MatchEvent[] = orderedEvents.filter((event) => event.minute <= startMinute);
     let nextEventIndex = shownEvents.length;
 
+    eventsRef.current = shownEvents;
     setEvents(shownEvents);
 
     if (startMinute > 0) {
-      await persistPlaybackSnapshot(shownEvents, source, startMinute);
+      syncPlaybackState(shownEvents, startMinute);
+      void publishPlaybackSnapshot(shownEvents, source, startMinute);
     } else {
       currentMinuteRef.current = 0;
+      eventsRef.current = [];
       setCurrentMinute(0);
     }
 
@@ -286,8 +316,8 @@ export default function MatchScreen() {
         nextEventIndex += 1;
       }
 
-      setEvents(shownEvents);
-      await persistPlaybackSnapshot(shownEvents, source, minute);
+      syncPlaybackState(shownEvents, minute);
+      void publishPlaybackSnapshot(shownEvents, source, minute);
       await new Promise((resolve) => setTimeout(resolve, SIMULATION_MINUTE_MS));
     }
 
@@ -300,7 +330,8 @@ export default function MatchScreen() {
     for (let minute = 1; minute <= maxWaitingMinute; minute += 1) {
       await new Promise((resolve) => setTimeout(resolve, SIMULATION_MINUTE_MS));
       if (shouldStop()) return;
-      await persistPlaybackSnapshot(events, source, minute);
+      syncPlaybackState(eventsRef.current, minute);
+      void publishPlaybackSnapshot(eventsRef.current, source, minute);
     }
   }
 
@@ -327,6 +358,7 @@ export default function MatchScreen() {
     if (!(await ensureCurrentMatchIsPlayable())) return;
 
     resetMatchSimulator();
+    eventsRef.current = [];
     setEvents([]);
     setHomeScore(0); setAwayScore(0);
     currentMinuteRef.current = 0;
