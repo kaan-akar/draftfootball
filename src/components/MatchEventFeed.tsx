@@ -14,7 +14,6 @@ interface Props {
   awayUsername: string;
   homeScore: number;
   awayScore: number;
-  currentMinute?: number;
   currentMinuteRef?: { current: number };
   isLive?: boolean;
 }
@@ -29,55 +28,74 @@ const EVENT_ICON: Record<string, string> = {
 const EventList = memo(
   ({ events }: { events: MatchEvent[] }) => (
     <ScrollView
-      style={styles.feed}
-      contentContainerStyle={Platform.OS === 'web' ? styles.feedWeb : undefined}
+      style={[styles.feed, Platform.OS === 'web' ? styles.noAnchor : undefined]}
       showsVerticalScrollIndicator={false}
     >
       {events.length === 0 && (
         <Text style={styles.waiting}>Maç başlıyor...</Text>
       )}
-      {[...events].reverse().map((ev, reversedIdx) => (
-        <View
-          key={`${events.length - 1 - reversedIdx}-${ev.minute}-${ev.type}`}
-          style={[
-            styles.event,
-            ev.type === 'goal' && styles.goalEvent,
-            ev.type === 'red_card' && styles.redEvent,
-          ]}
-        >
-          <Text style={styles.minute}>{ev.minute}'</Text>
-          <Text style={styles.icon}>{EVENT_ICON[ev.type] ?? '▶'}</Text>
-          <Text style={styles.desc}>{ev.description}</Text>
-        </View>
-      ))}
+      {[...events].reverse().map((ev, reversedIdx) => {
+        const originalIdx = events.length - 1 - reversedIdx;
+        return (
+          <View
+            key={`${originalIdx}-${ev.minute}-${ev.type}`}
+            style={[
+              styles.event,
+              ev.type === 'goal' && styles.goalEvent,
+              ev.type === 'red_card' && styles.redEvent,
+            ]}
+          >
+            <Text style={styles.minute}>{ev.minute}'</Text>
+            <Text style={styles.icon}>{EVENT_ICON[ev.type] ?? '▶'}</Text>
+            <Text style={styles.desc}>{ev.description}</Text>
+          </View>
+        );
+      })}
       <View style={{ height: 24 }} />
     </ScrollView>
   ),
   (prev, next) => eventsSignature(prev.events) === eventsSignature(next.events),
 );
 
+// Scoreboard repaints only when the score actually changes (a goal), NOT on
+// every minute tick. This is the main fix for the PC text flicker.
+const Scoreboard = memo(({
+  homeUsername,
+  awayUsername,
+  homeScore,
+  awayScore,
+}: {
+  homeUsername: string;
+  awayUsername: string;
+  homeScore: number;
+  awayScore: number;
+}) => (
+  <View style={styles.scoreboard}>
+    <Text style={styles.teamName}>{homeUsername}</Text>
+    <Text style={styles.score}>{homeScore} – {awayScore}</Text>
+    <Text style={styles.teamName}>{awayUsername}</Text>
+  </View>
+));
+
+// The live clock advances purely from a ref + local interval, so the minute
+// counter never triggers a re-render of the parent screen or the scoreboard.
 const LiveMinuteTag = memo(({
-  currentMinute,
   currentMinuteRef,
   isLive,
 }: {
-  currentMinute?: number;
   currentMinuteRef?: { current: number };
   isLive?: boolean;
 }) => {
-  const [displayMinute, setDisplayMinute] = useState(currentMinute ?? 0);
-
-  useEffect(() => {
-    setDisplayMinute(currentMinute ?? 0);
-  }, [currentMinute]);
+  const [displayMinute, setDisplayMinute] = useState(currentMinuteRef?.current ?? 0);
 
   useEffect(() => {
     if (!isLive || !currentMinuteRef) return undefined;
 
+    setDisplayMinute(currentMinuteRef.current ?? 0);
     const intervalId = setInterval(() => {
       const nextMinute = currentMinuteRef.current ?? 0;
       setDisplayMinute((prevMinute) => (prevMinute === nextMinute ? prevMinute : nextMinute));
-    }, 150);
+    }, 250);
 
     return () => clearInterval(intervalId);
   }, [currentMinuteRef, isLive]);
@@ -86,27 +104,25 @@ const LiveMinuteTag = memo(({
   return <Text style={styles.liveTag}>🔴 CANLI {displayMinute}'</Text>;
 });
 
-export default function MatchEventFeed({
+function MatchEventFeed({
   events,
   homeUsername,
   awayUsername,
   homeScore,
   awayScore,
-  currentMinute,
   currentMinuteRef,
   isLive,
 }: Props) {
 
   return (
     <View style={styles.wrap}>
-      {/* Scoreboard */}
-      <View style={styles.scoreboard}>
-        <Text style={styles.teamName}>{homeUsername}</Text>
-        <Text style={styles.score}>{homeScore} – {awayScore}</Text>
-        <Text style={styles.teamName}>{awayUsername}</Text>
-      </View>
+      <Scoreboard
+        homeUsername={homeUsername}
+        awayUsername={awayUsername}
+        homeScore={homeScore}
+        awayScore={awayScore}
+      />
       <LiveMinuteTag
-        currentMinute={currentMinute}
         currentMinuteRef={currentMinuteRef}
         isLive={isLive}
       />
@@ -115,6 +131,8 @@ export default function MatchEventFeed({
     </View>
   );
 }
+
+export default memo(MatchEventFeed);
 
 const styles = StyleSheet.create({
   wrap: { flex: 1 },
@@ -127,7 +145,7 @@ const styles = StyleSheet.create({
   score: { color: '#fbbf24', fontWeight: '900', fontSize: 28, marginHorizontal: 12 },
   liveTag: { color: '#ef4444', fontWeight: '700', textAlign: 'center', marginBottom: 8 },
   feed: { flex: 1 },
-  feedWeb: { overflowAnchor: 'none' } as object,
+  noAnchor: { overflowAnchor: 'none' } as object,
   waiting: { color: '#6b7280', textAlign: 'center', marginTop: 24, fontSize: 14 },
   event: {
     flexDirection: 'row', alignItems: 'flex-start',

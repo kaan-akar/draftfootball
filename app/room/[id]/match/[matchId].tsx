@@ -57,7 +57,6 @@ export default function MatchScreen() {
   const [events, setEvents] = useState<MatchEvent[]>([]);
   const [homeScore, setHomeScore] = useState(0);
   const [awayScore, setAwayScore] = useState(0);
-  const [currentMinute, setCurrentMinute] = useState(0);
   const [isLive, setIsLive] = useState(false);
   const [summary, setSummary] = useState('');
   const [mvp, setMvp] = useState('');
@@ -151,7 +150,6 @@ export default function MatchScreen() {
     setAwayScore(nextMatch?.away_score ?? 0);
     currentMinuteRef.current = nextMinute;
     eventsRef.current = nextEvents;
-    setCurrentMinute(nextMinute);
     setEvents(nextEvents);
     setSummary(nextMatch?.summary ?? '');
     setMvp(nextMatch?.mvp ?? '');
@@ -323,7 +321,7 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
 
     setHomeScore(result.home_score);
     setAwayScore(result.away_score);
-    setCurrentMinute(90);
+    currentMinuteRef.current = 90;
     setSummary(finalSummary);
     setMvp(finalMvp);
     setEvents(result.events);
@@ -395,7 +393,6 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     } else {
       currentMinuteRef.current = 0;
       eventsRef.current = [];
-      setCurrentMinute(0);
     }
 
     for (let minute = Math.max(startMinute + 1, 1); minute <= 90; minute += 1) {
@@ -454,7 +451,6 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     setEvents([]);
     setHomeScore(0); setAwayScore(0);
     currentMinuteRef.current = 0;
-    setCurrentMinute(0);
     setSummary(''); setMvp('');
     setSimulationSource('llm');
     setIsSimulating(true);
@@ -527,7 +523,6 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
           awayUsername={displayNames.away}
           homeScore={homeScore}
           awayScore={awayScore}
-          currentMinute={currentMinute}
           currentMinuteRef={currentMinuteRef}
           isLive={isLive}
         />
