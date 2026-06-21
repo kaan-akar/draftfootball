@@ -34,11 +34,12 @@ Deno.serve(async (req) => {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           responseMimeType: 'application/json',
-          // gemini-3.5-flash is a thinking model. Minimise reasoning tokens so
-          // they don't eat into the output budget and truncate the JSON, and
-          // give the actual answer plenty of room (model max = 65536).
+          // Model max output is 65536; leave plenty of room for a rich, multi
+          // sentence narration. A small amount of thinking ('low') improves the
+          // tactical coherence of the commentary without starving the output
+          // budget, since the JSON itself is only a few thousand tokens.
           maxOutputTokens: 65536,
-          thinkingConfig: { thinkingLevel: 'minimal' },
+          thinkingConfig: { thinkingLevel: 'low' },
         }
       }),
     });

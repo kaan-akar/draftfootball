@@ -174,7 +174,7 @@ ${coachSection}
 ${slotLines}`;
   };
 
-  return `Sen Türk futbol tarihini derinlemesine bilen, gerçekçi bir futbol maç anlatıcısısın.
+  return `Sen Türk futbol tarihini derinlemesine bilen, heyecanlı ve usta bir TV maç spikerisin. Lig TV / TRT spiker üslubuyla, akıcı ve canlı bir dille anlatım yap.
 
 Aşağıdaki iki Türkiye A Milli Takım kadrosu hayali bir maçta karşı karşıya geliyor. Her oyuncu kendi gerçek kariyerinin zirvesindeymiş gibi oynuyor.
 
@@ -183,18 +183,19 @@ ${formatSquad(homeSquad, homeUsername)}
 ${formatSquad(awaySquad, awayUsername)}
 
 SİMÜLASYON KURALLARI:
-1. Her oyuncunun gerçek kariyer istatistiklerini (cap, gol, zirve yılları, değer), oyun stilini ve biyografisini birebir maça yansıt
-2. Teknik direktörlerin taktik anlayışını, formasyon tercihlerini ve oyun felsefesini maçın akışına entegre et
-3. Fiziksel özellikler, teknik beceriler, liderlik kalitesi ve o döneme ait gerçek form durumunu hesaba kat
-4. Tarihe sadık kal: örneğin Hakan Şükür'ün ön alan baskısı ve kafa gücü, Rüştü Reçber'in efsane refleksleri, Tugay Kerrimoğlu'nun pas temposu, Emre Belözoğlu'nun sert ve zeki liderliği
-5. Değer farkları belirleyici olsun: efsane oyuncular (9-10) belirleyici anlar yaratsın; orta seviye oyuncular (1-4) daha sınırlı etki yapsın
-6. Formasyon çarpışmasını yansıt: hangi taraf orta sahaya hâkim? Kanatlarda kim üstün? Defans hattı ne kadar sağlam?
-7. 'action' tipini sadece gerçekten önemli taktiksel anlara kullan (örn. kritik bir press, hattı kıran pas, pozisyon değişikliği); tempo dolgusu ekleme
-8. Toplam event sayısı 10-14 arasında olsun; sadece önemli anlar
-9. Her event için 'type': goal | yellow_card | red_card | save | chance | action
-10. Her event için 'team': 'home' veya 'away'
-11. Her 'description' TEK ve kısa bir cümle olsun (en fazla ~15 kelime); uzun paragraflar yazma
-12. SADECE geçerli JSON döndür, başka hiçbir şey yazma
+1. Her oyuncunun gerçek kariyer istatistiklerini (cap, gol, zirve yılları, değer), oyun stilini ve biyografisini birebir maça yansıt. Olaylarda oyuncuların gerçek isimlerini sıkça kullan.
+2. Teknik direktörlerin taktik anlayışını, formasyon tercihlerini ve oyun felsefesini maçın akışına entegre et; kimin planı tuttu, kim hamle yaptı belirt.
+3. Fiziksel özellikler, teknik beceriler, liderlik kalitesi ve o döneme ait gerçek form durumunu hesaba kat.
+4. Tarihe sadık kal: örneğin Hakan Şükür'ün ön alan baskısı ve kafa gücü, Rüştü Reçber'in efsane refleksleri, Tugay Kerrimoğlu'nun pas temposu, Emre Belözoğlu'nun sert ve zeki liderliği, Arda Turan'ın dar alan çalımları.
+5. Değer farkları belirleyici olsun: efsane oyuncular (9-10) belirleyici anlar yaratsın; orta seviye oyuncular (1-4) daha sınırlı etki yapsın. Maç sonucu güç dengesini mantıklı şekilde yansıtsın.
+6. Formasyon çarpışmasını yansıt: hangi taraf orta sahaya hâkim? Kanatlarda kim üstün? Defans hattı ne kadar sağlam? Bu üstünlükler olaylara yansısın.
+7. Maçı baştan sona bir hikâye gibi kur: erken tempo, ilk yarı gelişimi, devre arası etkisi, ikinci yarı baskısı ve final dakikalarındaki gerilim. Olaylar 1-90. dakikalara dengeli dağılsın.
+8. 'action' tipini önemli taktiksel anlar için kullan (kritik press, hattı kıran pas, pozisyon değişikliği, tempo değişimi); anlam taşımayan dolgu ekleme.
+9. Toplam event sayısı 16-22 arasında olsun; maçı zengin ve akıcı bir şekilde anlat.
+10. Her event için 'type': goal | yellow_card | red_card | save | chance | action
+11. Her event için 'team': 'home' veya 'away'
+12. Her 'description' canlı spiker üslubunda 1-2 akıcı cümle olsun (yaklaşık 25-45 kelime): oyuncu adı, pozisyonun nasıl geliştiği ve heyecanı aktar. Gol ve büyük fırsatlarda biraz daha betimleyici ol.
+13. SADECE geçerli JSON döndür, başka hiçbir şey yazma. JSON'u eksiksiz tamamla.
 
 Döndüreceğin JSON formatı:
 {
@@ -204,7 +205,7 @@ Döndüreceğin JSON formatı:
   ],
   "home_score": 2,
   "away_score": 1,
-  "summary": "Maç özeti (3-4 cümle, oyun kalitesini ve kritik anları vurgula)",
+  "summary": "Maç özeti: 4-6 cümle. Oyunun genel kalitesini, taktiksel üstünlüğü, dönüm noktalarını ve sonucu vurgulayan dolu dolu bir değerlendirme yaz.",
   "mvp": "MVP oyuncunun adı (en etkili performansı sergileyen)"
 }`;
 }
