@@ -345,6 +345,18 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     return data ?? [];
   }
 
+  // Only one match in a room may be 'live' at a time (playback is sequential).
+  // When we start a match, any other match still marked live is an orphan from
+  // an interrupted playback, so reset it back to 'scheduled'. This prevents the
+  // two-live-matches state that caused the redirect ping-pong.
+  async function resetOtherLiveMatches(exceptId: string) {
+    await supabase.from('matches')
+      .update({ status: 'scheduled', current_minute: 0, events: [], home_score: 0, away_score: 0, simulation_source: null })
+      .eq('room_id', roomId)
+      .eq('status', 'live')
+      .neq('id', exceptId);
+  }
+
   async function startNextMatchInQueue() {
     const roomMatches = await getOrderedMatches();
     const nextMatch = roomMatches.find((candidate: any) => candidate.status === 'scheduled');
@@ -368,6 +380,7 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
       return;
     }
 
+    await resetOtherLiveMatches(claimedMatch.id);
     router.replace(`/room/${roomId}/match/${claimedMatch.id}?autostart=1`);
   }
 
@@ -416,14 +429,10 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
 
   async function ensureCurrentMatchIsPlayable() {
     const roomMatches = await getOrderedMatches();
-    const liveMatch = pickLiveMatch(roomMatches);
-    if (liveMatch && liveMatch.id !== matchId) {
-      router.replace(`/room/${roomId}/match/${liveMatch.id}`);
-      return false;
-    }
-
+    // Enforce fixture order: the earliest still-scheduled match must be played
+    // first. (Orphan live matches are cleared separately in startSimulation.)
     const nextScheduledMatch = roomMatches.find((candidate: any) => candidate.status === 'scheduled');
-    if (!liveMatch && nextScheduledMatch && nextScheduledMatch.id !== matchId && match?.status === 'scheduled') {
+    if (nextScheduledMatch && nextScheduledMatch.id !== matchId && match?.status === 'scheduled') {
       Alert.alert('Sıralı oynatma aktif', 'Önce sıradaki maçı bitirmen gerekiyor.');
       router.replace(`/room/${roomId}/match/${nextScheduledMatch.id}`);
       return false;
@@ -454,6 +463,7 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     setSimulationSource('llm');
     setIsSimulating(true);
 
+    await resetOtherLiveMatches(matchId);
     await supabase.from('matches').update({
       status: 'live', simulation_source: 'llm', current_minute: 0, events: [],
     }).eq('id', matchId);
