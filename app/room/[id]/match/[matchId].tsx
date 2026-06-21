@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert, Platform,
 } from 'react-native';
@@ -62,13 +62,24 @@ export default function MatchScreen() {
   const [mvp, setMvp] = useState('');
   const [simulationSource, setSimulationSource] = useState<MatchSimulationSource | null>(null);
   const [usernames, setUsernames] = useState<Record<string, string>>({});
-  const [displayNames, setDisplayNames] = useState({ home: 'Ev Sahibi', away: 'Deplasman' });
   const [isHost, setIsHost] = useState(false);
+
+  // Team names are derived from the match + usernames, never stored as their own
+  // state. This prevents the host scoreboard from oscillating between the real
+  // names and the "Ev Sahibi / Deplasman" defaults during live playback.
+  const displayNames = useMemo(() => {
+    const homeName = match?.home_player_id ? usernames[match.home_player_id] : undefined;
+    const awayName = match?.away_player_id ? usernames[match.away_player_id] : undefined;
+    return {
+      home: homeName || 'Ev Sahibi',
+      away: awayName || 'Deplasman',
+    };
+  }, [match?.home_player_id, match?.away_player_id, usernames]);
+
   const isPlayingRef = useRef(false);
   const currentMinuteRef = useRef(0);
   const eventsRef = useRef<MatchEvent[]>([]);
   const llmEnhancedRef = useRef<{ summary: string; mvp: string } | null>(null);
-  const usernamesRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     fetchMatch();
@@ -155,17 +166,6 @@ export default function MatchScreen() {
     setMvp(nextMatch?.mvp ?? '');
     setSimulationSource(nextMatch?.simulation_source ?? null);
     setIsLive(nextMatch?.status === 'live');
-    syncDisplayNames(nextMatch, usernamesRef.current);
-  }
-
-  function syncDisplayNames(nextMatch: any, nextUsernames: Record<string, string>) {
-    const homeName = nextMatch?.home_player_id ? nextUsernames[nextMatch.home_player_id] : undefined;
-    const awayName = nextMatch?.away_player_id ? nextUsernames[nextMatch.away_player_id] : undefined;
-
-    setDisplayNames((prev) => ({
-      home: homeName ?? prev.home,
-      away: awayName ?? prev.away,
-    }));
   }
 
   function getSimulationSourceLabel(source: MatchSimulationSource | null) {
@@ -268,9 +268,7 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
       supabase.from('room_players').select('user_id,username,formation,picked_coach_id').eq('room_id', roomId),
     ]);
     const unmap = Object.fromEntries((rp ?? []).map((p: any) => [p.user_id, p.username]));
-    usernamesRef.current = unmap;
     setUsernames(unmap);
-    syncDisplayNames(m, unmap);
     const uid = (await supabase.auth.getSession()).data.session?.user.id ?? '';
     setIsHost(room?.host_id === uid);
 
