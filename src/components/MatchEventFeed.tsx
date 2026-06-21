@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 import { ScrollView, View, Text, StyleSheet } from 'react-native';
 import type { MatchEvent } from '../types/game';
 
@@ -9,6 +9,7 @@ interface Props {
   homeScore: number;
   awayScore: number;
   currentMinute?: number;
+  currentMinuteRef?: { current: number };
   isLive?: boolean;
 }
 
@@ -42,6 +43,36 @@ const EventList = memo(({ events }: { events: MatchEvent[] }) => (
   </ScrollView>
 ));
 
+const LiveMinuteTag = memo(({
+  currentMinute,
+  currentMinuteRef,
+  isLive,
+}: {
+  currentMinute?: number;
+  currentMinuteRef?: { current: number };
+  isLive?: boolean;
+}) => {
+  const [displayMinute, setDisplayMinute] = useState(currentMinute ?? 0);
+
+  useEffect(() => {
+    setDisplayMinute(currentMinute ?? 0);
+  }, [currentMinute]);
+
+  useEffect(() => {
+    if (!isLive || !currentMinuteRef) return undefined;
+
+    const intervalId = setInterval(() => {
+      const nextMinute = currentMinuteRef.current ?? 0;
+      setDisplayMinute((prevMinute) => (prevMinute === nextMinute ? prevMinute : nextMinute));
+    }, 150);
+
+    return () => clearInterval(intervalId);
+  }, [currentMinuteRef, isLive]);
+
+  if (!isLive) return null;
+  return <Text style={styles.liveTag}>🔴 CANLI {displayMinute}'</Text>;
+});
+
 export default function MatchEventFeed({
   events,
   homeUsername,
@@ -49,6 +80,7 @@ export default function MatchEventFeed({
   homeScore,
   awayScore,
   currentMinute,
+  currentMinuteRef,
   isLive,
 }: Props) {
 
@@ -60,7 +92,11 @@ export default function MatchEventFeed({
         <Text style={styles.score}>{homeScore} – {awayScore}</Text>
         <Text style={styles.teamName}>{awayUsername}</Text>
       </View>
-      {isLive && <Text style={styles.liveTag}>🔴 CANLI {currentMinute ?? 0}'</Text>}
+      <LiveMinuteTag
+        currentMinute={currentMinute}
+        currentMinuteRef={currentMinuteRef}
+        isLive={isLive}
+      />
 
       <EventList events={events} />
     </View>

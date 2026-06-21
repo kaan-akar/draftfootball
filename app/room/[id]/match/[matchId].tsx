@@ -146,7 +146,6 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     setHomeScore(score.home);
     setAwayScore(score.away);
     currentMinuteRef.current = minute;
-    setCurrentMinute(minute);
   }
 
   async function publishPlaybackSnapshot(
@@ -466,6 +465,7 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
           homeScore={homeScore}
           awayScore={awayScore}
           currentMinute={currentMinute}
+          currentMinuteRef={currentMinuteRef}
           isLive={isLive}
         />
       </View>
