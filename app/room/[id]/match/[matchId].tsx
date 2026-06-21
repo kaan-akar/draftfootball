@@ -7,7 +7,7 @@ import { supabase } from '../../../../src/lib/supabase';
 import { simulateMatch, simulateMatchLocally, resetMatchSimulator } from '../../../../src/lib/matchSimulator';
 import { getSlotsForFormation } from '../../../../src/lib/formationUtils';
 import MatchEventFeed from '../../../../src/components/MatchEventFeed';
-import type { Squad, MatchEvent, Formation } from '../../../../src/types/game';
+import type { Squad, MatchEvent, Formation, MatchSimulationSource } from '../../../../src/types/game';
 
 export default function MatchScreen() {
   const { id: roomId, matchId } = useLocalSearchParams<{ id: string; matchId: string }>();
@@ -20,6 +20,7 @@ export default function MatchScreen() {
   const [isLive, setIsLive] = useState(false);
   const [summary, setSummary] = useState('');
   const [mvp, setMvp] = useState('');
+  const [simulationSource, setSimulationSource] = useState<MatchSimulationSource | null>(null);
   const [usernames, setUsernames] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -45,7 +46,14 @@ export default function MatchScreen() {
     setEvents(nextMatch?.events ?? []);
     setSummary(nextMatch?.summary ?? '');
     setMvp(nextMatch?.mvp ?? '');
+    setSimulationSource(nextMatch?.simulation_source ?? null);
     setIsLive(nextMatch?.status === 'live');
+  }
+
+  function getSimulationSourceLabel(source: MatchSimulationSource | null) {
+    if (source === 'llm') return 'LLM destekli canlı anlatım';
+    if (source === 'local') return 'Yerel hızlı simülasyon';
+    return null;
   }
 
   function calculateLiveScore(nextEvents: MatchEvent[]) {
@@ -61,13 +69,14 @@ export default function MatchScreen() {
     );
   }
 
-  async function persistLiveSnapshot(nextEvents: MatchEvent[]) {
+  async function persistLiveSnapshot(nextEvents: MatchEvent[], source: MatchSimulationSource | null) {
     const score = calculateLiveScore(nextEvents);
     setHomeScore(score.home);
     setAwayScore(score.away);
 
     await supabase.from('matches').update({
       status: 'live',
+      simulation_source: source,
       home_score: score.home,
       away_score: score.away,
       events: nextEvents,
@@ -76,6 +85,9 @@ export default function MatchScreen() {
 
   async function playLocalFallbackSimulation() {
     if (!homeSquad || !awaySquad || !match) return;
+
+    setSimulationSource('local');
+    await supabase.from('matches').update({ status: 'live', simulation_source: 'local' }).eq('id', matchId);
 
     const result = simulateMatchLocally(
       homeSquad,
@@ -88,11 +100,11 @@ export default function MatchScreen() {
     for (const event of result.events) {
       streamedEvents = [...streamedEvents, event];
       setEvents(streamedEvents);
-      await persistLiveSnapshot(streamedEvents);
+      await persistLiveSnapshot(streamedEvents, 'local');
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
 
-    await persistMatchResult(result);
+    await persistMatchResult(result, 'local');
   }
 
   async function fetchMatch() {
@@ -140,16 +152,21 @@ export default function MatchScreen() {
     }
   }
 
-  async function persistMatchResult(result: { home_score: number; away_score: number; summary: string; mvp: string; events: MatchEvent[] }) {
+  async function persistMatchResult(
+    result: { home_score: number; away_score: number; summary: string; mvp: string; events: MatchEvent[] },
+    source: MatchSimulationSource | null,
+  ) {
     setHomeScore(result.home_score);
     setAwayScore(result.away_score);
     setSummary(result.summary);
     setMvp(result.mvp);
     setEvents(result.events);
+    setSimulationSource(source);
     setIsLive(false);
 
     await supabase.from('matches').update({
       status: 'finished',
+      simulation_source: source,
       home_score: result.home_score,
       away_score: result.away_score,
       events: result.events,
@@ -168,9 +185,10 @@ export default function MatchScreen() {
     setEvents([]);
     setHomeScore(0); setAwayScore(0);
     setSummary(''); setMvp('');
+    setSimulationSource('llm');
     setIsLive(true);
 
-    await supabase.from('matches').update({ status: 'live' }).eq('id', matchId);
+    await supabase.from('matches').update({ status: 'live', simulation_source: 'llm' }).eq('id', matchId);
 
     simulateMatch(
       homeSquad, awaySquad,
@@ -179,11 +197,11 @@ export default function MatchScreen() {
       (event) => {
         setEvents((prev) => {
           const nextEvents = [...prev, event];
-          void persistLiveSnapshot(nextEvents);
+          void persistLiveSnapshot(nextEvents, 'llm');
           return nextEvents;
         });
       },
-      async (result) => { await persistMatchResult(result); },
+      async (result) => { await persistMatchResult(result, 'llm'); },
       async (err) => {
         if (err.startsWith('RATE_LIMIT:')) {
           Alert.alert('Gemini limitine takıldı', 'Geçici olarak yerel hızlı simülasyona geçiliyor.');
@@ -221,6 +239,7 @@ export default function MatchScreen() {
   }
 
   const isFinished = match?.status === 'finished';
+  const simulationSourceLabel = getSimulationSourceLabel(simulationSource);
 
   return (
     <View style={styles.screen}>
@@ -239,6 +258,10 @@ export default function MatchScreen() {
           <Text style={styles.summaryText}>{summary}</Text>
           <Text style={styles.mvp}>⭐ MVP: {mvp}</Text>
         </View>
+      ) : null}
+
+      {(isLive || isFinished) && simulationSourceLabel ? (
+        <Text style={styles.simulationNote}>Bu maç {simulationSourceLabel.toLowerCase()} ile oynatıldı.</Text>
       ) : null}
 
       <View style={styles.footer}>
@@ -264,6 +287,7 @@ const styles = StyleSheet.create({
   summaryTitle: { color: '#f3f4f6', fontWeight: '700', marginBottom: 6 },
   summaryText: { color: '#9ca3af', fontSize: 13, lineHeight: 20 },
   mvp: { color: '#fbbf24', fontWeight: '700', marginTop: 6 },
+  simulationNote: { color: '#94a3b8', fontSize: 12, marginTop: 8, textAlign: 'center' },
   footer: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
   startBtn: { flex: 1, backgroundColor: '#16a34a', borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
   startBtnText: { color: '#fff', fontWeight: '900', fontSize: 15 },

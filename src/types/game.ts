@@ -146,6 +146,7 @@ export interface Squad {
 
 // ─── Tournament / Match ─────────────────────────────────────────────────────
 export type MatchStatus = 'scheduled' | 'live' | 'finished';
+export type MatchSimulationSource = 'llm' | 'local';
 
 export interface MatchEvent {
   minute: number;
@@ -166,6 +167,7 @@ export interface Match {
   events: MatchEvent[];
   summary: string;
   mvp: string;
+  simulationSource?: MatchSimulationSource | null;
 }
 
 export interface Standing {
