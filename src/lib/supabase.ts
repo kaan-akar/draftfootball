@@ -28,6 +28,21 @@ export async function signUp(email: string, password: string, username: string) 
 export async function signIn(email: string, password: string) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
+  // Trigger öncesi kayıt olmuş kullanıcılar için fallback profil oluştur
+  if (data.user) {
+    const { data: existing } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('id', data.user.id)
+      .maybeSingle();
+    if (!existing) {
+      const username =
+        (data.user.user_metadata?.username as string) ??
+        data.user.email?.split('@')[0] ??
+        'oyuncu';
+      await supabase.from('profiles').insert({ id: data.user.id, username });
+    }
+  }
   return data;
 }
 
