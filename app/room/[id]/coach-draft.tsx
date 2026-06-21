@@ -160,7 +160,7 @@ export default function CoachDraftScreen() {
             picked={pickedCoachIds.has(item.id)}
             myPick={me?.picked_coach_id === item.id}
             showActions={true}
-            disabled={waitingOnObjection || !isMyTurn || pickedCoachIds.has(item.id) || item.price > (me?.player_budget ?? 0)}
+            disabled={waitingOnObjection || !isMyTurn || !!me?.picked_coach_id || pickedCoachIds.has(item.id) || item.price > (me?.player_budget ?? 0)}
             onSelect={() => handleSelect(item)}
           />
         )}

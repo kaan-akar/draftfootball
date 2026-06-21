@@ -327,7 +327,7 @@ export default function PlayerDraftScreen() {
                 picked={isPicked}
                 myPick={isMinePick}
                 showActions={!isPicked}
-                disabled={waitingOnObjection || !isMyTurn || isPicked || item.price > (me?.player_budget ?? 0) || !compatible}
+                disabled={waitingOnObjection || !isMyTurn || !!targetSlotFilled || isPicked || item.price > (me?.player_budget ?? 0) || !compatible}
                 onSelect={() => handleSelect(item)}
               />
             );
