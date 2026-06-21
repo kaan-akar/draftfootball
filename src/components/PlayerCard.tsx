@@ -29,7 +29,7 @@ export default function PlayerCard({ player, onSelect, onObject, disabled, picke
         <Text style={styles.price}>{player.price} TL</Text>
       </View>
       <Text style={styles.name}>{player.name}</Text>
-      <Text style={styles.sub}>{player.positions.join(' / ')} · {player.peak_years}</Text>
+      <Text style={styles.sub}>{(player.positions ?? []).join(' / ')} · {player.peak_years}</Text>
       <Text style={styles.stats}>{player.caps} maç · {player.goals} gol</Text>
       {picked && <Text style={styles.pickedBadge}>{myPick ? '✓ SENİN' : '✗ SEÇİLDİ'}</Text>}
       {showActions && !picked && (
