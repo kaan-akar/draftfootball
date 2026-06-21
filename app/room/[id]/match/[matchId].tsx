@@ -26,9 +26,11 @@ export default function MatchScreen() {
   const [mvp, setMvp] = useState('');
   const [simulationSource, setSimulationSource] = useState<MatchSimulationSource | null>(null);
   const [usernames, setUsernames] = useState<Record<string, string>>({});
+  const [displayNames, setDisplayNames] = useState({ home: 'Ev Sahibi', away: 'Deplasman' });
   const [isHost, setIsHost] = useState(false);
   const currentMinuteRef = useRef(0);
   const eventsRef = useRef<MatchEvent[]>([]);
+  const usernamesRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     fetchMatch();
@@ -90,6 +92,17 @@ export default function MatchScreen() {
     setMvp(nextMatch?.mvp ?? '');
     setSimulationSource(nextMatch?.simulation_source ?? null);
     setIsLive(nextMatch?.status === 'live');
+    syncDisplayNames(nextMatch, usernamesRef.current);
+  }
+
+  function syncDisplayNames(nextMatch: any, nextUsernames: Record<string, string>) {
+    const homeName = nextMatch?.home_player_id ? nextUsernames[nextMatch.home_player_id] : undefined;
+    const awayName = nextMatch?.away_player_id ? nextUsernames[nextMatch.away_player_id] : undefined;
+
+    setDisplayNames((prev) => ({
+      home: homeName ?? prev.home,
+      away: awayName ?? prev.away,
+    }));
   }
 
   function getSimulationSourceLabel(source: MatchSimulationSource | null) {
@@ -183,7 +196,9 @@ export default function MatchScreen() {
       supabase.from('room_players').select('user_id,username,formation,picked_coach_id').eq('room_id', roomId),
     ]);
     const unmap = Object.fromEntries((rp ?? []).map((p: any) => [p.user_id, p.username]));
+    usernamesRef.current = unmap;
     setUsernames(unmap);
+    syncDisplayNames(m, unmap);
     const uid = (await supabase.auth.getSession()).data.session?.user.id ?? '';
     setIsHost(room?.host_id === uid);
 
@@ -294,7 +309,7 @@ export default function MatchScreen() {
     source: MatchSimulationSource,
     startMinute = 0,
   ) {
-    const orderedEvents = [...result.events].sort((a, b) => a.minute - b.minute);
+    const orderedEvents = buildMinuteTimeline(result.events);
     let shownEvents: MatchEvent[] = orderedEvents.filter((event) => event.minute <= startMinute);
     let nextEventIndex = shownEvents.length;
 
@@ -333,6 +348,24 @@ export default function MatchScreen() {
       syncPlaybackState(eventsRef.current, minute);
       void publishPlaybackSnapshot(eventsRef.current, source, minute);
     }
+  }
+
+  function buildMinuteTimeline(baseEvents: MatchEvent[]) {
+    const sortedEvents = [...baseEvents].sort((a, b) => a.minute - b.minute);
+    const minutesWithEvents = new Set(sortedEvents.map((event) => event.minute));
+    const timeline: MatchEvent[] = [...sortedEvents];
+
+    for (let minute = 1; minute <= 90; minute += 1) {
+      if (minutesWithEvents.has(minute)) continue;
+      timeline.push({
+        minute,
+        type: 'action',
+        team: minute % 2 === 0 ? 'home' : 'away',
+        description: `${minute}' Oyun bu dakikada kontrollu tempoda devam ediyor. Iki takim da bosluk ariyor.`,
+      });
+    }
+
+    return timeline.sort((a, b) => a.minute - b.minute || a.type.localeCompare(b.type));
   }
 
   async function ensureCurrentMatchIsPlayable() {
@@ -376,7 +409,6 @@ export default function MatchScreen() {
     const timeoutId = setTimeout(async () => {
       if (settled) return;
       settled = true;
-      Alert.alert('LLM yanıtı gecikti', 'Canlı akışın takılmaması için yerel hızlı simülasyona geçiliyor.');
       await playLocalFallbackSimulation();
     }, LLM_RESULT_TIMEOUT_MS);
 
@@ -396,17 +428,14 @@ export default function MatchScreen() {
         settled = true;
         clearTimeout(timeoutId);
         if (err.startsWith('RATE_LIMIT:')) {
-          Alert.alert('Gemini limitine takıldı', 'Geçici olarak yerel hızlı simülasyona geçiliyor.');
           await playLocalFallbackSimulation();
           return;
         }
         if (err.startsWith('MODEL_NOT_FOUND:')) {
-          Alert.alert('Gemini modeli bulunamadı', 'Güncel model endpointi kullanılamadı. Yerel hızlı simülasyona geçiliyor.');
           await playLocalFallbackSimulation();
           return;
         }
         if (err.startsWith('Ağ hatası:')) {
-          Alert.alert('Gemini ağına ulaşılamadı', 'API servisine erişilemedi. Yerel hızlı simülasyona geçiliyor.');
           await playLocalFallbackSimulation();
           return;
         }
@@ -444,8 +473,8 @@ export default function MatchScreen() {
     <View style={styles.screen}>
       <MatchEventFeed
         events={events}
-        homeUsername={usernames[match?.home_player_id] ?? 'Ev Sahibi'}
-        awayUsername={usernames[match?.away_player_id] ?? 'Deplasman'}
+        homeUsername={displayNames.home}
+        awayUsername={displayNames.away}
         homeScore={homeScore}
         awayScore={awayScore}
         currentMinute={currentMinute}
