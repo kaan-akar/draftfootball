@@ -14,7 +14,7 @@ export default function LobbyScreen() {
   const [players, setPlayers] = useState<any[]>([]);
   const [myUserId, setMyUserId] = useState('');
   const [myFormation, setMyFormation] = useState<Formation | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loadingAction, setLoadingAction] = useState<'draft' | 'random' | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -42,6 +42,7 @@ export default function LobbyScreen() {
   function handleRoomChange({ new: newRoom }: any) {
     setRoom(newRoom);
     if (newRoom?.status === 'coach_draft') router.replace(`/room/${roomId}/coach-draft`);
+    if (newRoom?.status === 'tournament') router.replace(`/room/${roomId}/fixture`);
   }
 
   const selectFormation = async (f: Formation) => {
@@ -64,10 +65,29 @@ export default function LobbyScreen() {
     const notReady = players.filter((p) => !p.is_ready);
     if (players.length < 2) { Alert.alert('En az 2 oyuncu gerekli'); return; }
     if (notReady.length > 0) { Alert.alert('Herkes hazır değil'); return; }
-    setLoading(true);
+    setLoadingAction('draft');
     try { await startCoachDraft(roomId); }
     catch (e: any) { Alert.alert('Hata', e.message); }
-    setLoading(false);
+    setLoadingAction(null);
+  };
+
+  const quickStartRandomTournament = async () => {
+    const playersWithoutFormation = players.filter((p) => !p.formation);
+    if (players.length < 2) { Alert.alert('En az 2 oyuncu gerekli'); return; }
+    if (playersWithoutFormation.length > 0) {
+      Alert.alert('Eksik formasyon', 'Hızlı test için herkes önce bir formasyon seçmeli.');
+      return;
+    }
+
+    setLoadingAction('random');
+    try {
+      const { error } = await supabase.rpc('quick_start_random_tournament', { p_room_id: roomId });
+      if (error) throw error;
+      router.replace(`/room/${roomId}/fixture`);
+    } catch (e: any) {
+      Alert.alert('Hata', e.message);
+    }
+    setLoadingAction(null);
   };
 
   const shareCode = () => {
@@ -77,6 +97,7 @@ export default function LobbyScreen() {
   const isHost = room?.host_id === myUserId;
   const me = players.find((p) => p.user_id === myUserId);
   const allReady = players.length >= 2 && players.every((p) => p.is_ready);
+  const isLoading = loadingAction !== null;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
@@ -121,15 +142,27 @@ export default function LobbyScreen() {
       </TouchableOpacity>
 
       {isHost && (
-        <TouchableOpacity
-          style={[styles.btn, styles.btnYellow, (!allReady || loading) && styles.btnDisabled]}
-          onPress={startDraft}
-          disabled={!allReady || loading}
-        >
-          <Text style={styles.btnText}>
-            {loading ? 'Başlatılıyor...' : allReady ? '🚀 Draftı Başlat' : 'Herkes hazır olunca başlatabilirsin'}
-          </Text>
-        </TouchableOpacity>
+        <>
+          <TouchableOpacity
+            style={[styles.btn, styles.btnYellow, (!allReady || isLoading) && styles.btnDisabled]}
+            onPress={startDraft}
+            disabled={!allReady || isLoading}
+          >
+            <Text style={styles.btnText}>
+              {loadingAction === 'draft' ? 'Draft başlatılıyor...' : allReady ? '🚀 Draftı Başlat' : 'Herkes hazır olunca başlatabilirsin'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.btn, styles.btnBlue, isLoading && styles.btnDisabled]}
+            onPress={quickStartRandomTournament}
+            disabled={isLoading}
+          >
+            <Text style={styles.btnText}>
+              {loadingAction === 'random' ? 'Random kadrolar hazırlanıyor...' : '🎲 Random Kadro Ver ve Turnuvaya Geç'}
+            </Text>
+          </TouchableOpacity>
+        </>
       )}
     </ScrollView>
   );
@@ -156,6 +189,7 @@ const styles = StyleSheet.create({
   btnGreen: { backgroundColor: '#16a34a' },
   btnRed: { backgroundColor: '#dc2626' },
   btnYellow: { backgroundColor: '#d97706' },
+  btnBlue: { backgroundColor: '#2563eb' },
   btnDisabled: { backgroundColor: '#374151' },
   btnText: { color: '#fff', fontWeight: '900', fontSize: 15 },
 });
