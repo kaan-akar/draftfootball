@@ -10,7 +10,6 @@ import MatchEventFeed from '../../../../src/components/MatchEventFeed';
 import type { Squad, MatchEvent, Formation, MatchSimulationSource } from '../../../../src/types/game';
 
 const SIMULATION_MINUTE_MS = 1000;
-const LLM_RESULT_TIMEOUT_MS = 15000;
 
 export default function MatchScreen() {
   const { id: roomId, matchId } = useLocalSearchParams<{ id: string; matchId: string }>();
@@ -30,6 +29,7 @@ export default function MatchScreen() {
   const [isHost, setIsHost] = useState(false);
   const currentMinuteRef = useRef(0);
   const eventsRef = useRef<MatchEvent[]>([]);
+  const llmEnhancedRef = useRef<{ summary: string; mvp: string } | null>(null);
   const usernamesRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
@@ -124,12 +124,7 @@ export default function MatchScreen() {
     );
   }
 
-  async function persistLiveSnapshot(nextEvents: MatchEvent[], source: MatchSimulationSource | null) {
-    const minute = nextEvents[nextEvents.length - 1]?.minute ?? currentMinute;
-    await persistPlaybackSnapshot(nextEvents, source, minute);
-  }
-
-  function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
+function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     const score = calculateLiveScore(nextEvents);
     eventsRef.current = nextEvents;
     setEvents(nextEvents);
@@ -247,24 +242,29 @@ export default function MatchScreen() {
     result: { home_score: number; away_score: number; summary: string; mvp: string; events: MatchEvent[] },
     source: MatchSimulationSource | null,
   ) {
+    const enhanced = llmEnhancedRef.current;
+    const finalSummary = enhanced?.summary ?? result.summary;
+    const finalMvp = enhanced?.mvp ?? result.mvp;
+    const finalSource: MatchSimulationSource = enhanced ? 'llm' : (source ?? 'local');
+
     setHomeScore(result.home_score);
     setAwayScore(result.away_score);
     setCurrentMinute(90);
-    setSummary(result.summary);
-    setMvp(result.mvp);
+    setSummary(finalSummary);
+    setMvp(finalMvp);
     setEvents(result.events);
-    setSimulationSource(source);
+    setSimulationSource(finalSource);
     setIsLive(false);
 
     await supabase.from('matches').update({
       status: 'finished',
-      simulation_source: source,
+      simulation_source: finalSource,
       current_minute: 90,
       home_score: result.home_score,
       away_score: result.away_score,
       events: result.events,
-      summary: result.summary,
-      mvp: result.mvp,
+      summary: finalSummary,
+      mvp: finalMvp,
       played_at: new Date().toISOString(),
     }).eq('id', matchId);
 
@@ -339,16 +339,6 @@ export default function MatchScreen() {
     await persistMatchResult(result, source);
   }
 
-  async function playWaitingClock(source: MatchSimulationSource, shouldStop: () => boolean) {
-    const maxWaitingMinute = Math.floor(LLM_RESULT_TIMEOUT_MS / SIMULATION_MINUTE_MS);
-
-    for (let minute = 1; minute <= maxWaitingMinute; minute += 1) {
-      await new Promise((resolve) => setTimeout(resolve, SIMULATION_MINUTE_MS));
-      if (shouldStop()) return;
-      syncPlaybackState(eventsRef.current, minute);
-      void publishPlaybackSnapshot(eventsRef.current, source, minute);
-    }
-  }
 
   function buildMinuteTimeline(baseEvents: MatchEvent[]) {
     const sortedEvents = [...baseEvents].sort((a, b) => a.minute - b.minute);
@@ -390,59 +380,38 @@ export default function MatchScreen() {
     if (!homeSquad || !awaySquad) { Alert.alert('Kadrolar yüklenemedi'); return; }
     if (!(await ensureCurrentMatchIsPlayable())) return;
 
+    const homeUsername = displayNames.home;
+    const awayUsername = displayNames.away;
+
     resetMatchSimulator();
+    llmEnhancedRef.current = null;
     eventsRef.current = [];
     setEvents([]);
     setHomeScore(0); setAwayScore(0);
     currentMinuteRef.current = 0;
     setCurrentMinute(0);
     setSummary(''); setMvp('');
-    setSimulationSource('llm');
+    setSimulationSource('local');
     setIsLive(true);
 
-    await supabase.from('matches').update({ status: 'live', simulation_source: 'llm', current_minute: 0, events: [] }).eq('id', matchId);
+    await supabase.from('matches').update({
+      status: 'live', simulation_source: 'local', current_minute: 0, events: [],
+    }).eq('id', matchId);
 
-    let settled = false;
-    const isSettled = () => settled;
-    void playWaitingClock('llm', isSettled);
-
-    const timeoutId = setTimeout(async () => {
-      if (settled) return;
-      settled = true;
-      await playLocalFallbackSimulation();
-    }, LLM_RESULT_TIMEOUT_MS);
-
+    // Fire LLM in background — result enhances summary/mvp only
     simulateMatch(
-      homeSquad, awaySquad,
-      usernames[match.home_player_id] ?? 'Ev Sahibi',
-      usernames[match.away_player_id] ?? 'Deplasman',
+      homeSquad, awaySquad, homeUsername, awayUsername,
       () => {},
-      async (result) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeoutId);
-        await playTimeline(result, 'llm', currentMinuteRef.current);
+      (result) => {
+        llmEnhancedRef.current = { summary: result.summary, mvp: result.mvp };
+        setSimulationSource('llm');
       },
-      async (err) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeoutId);
-        if (err.startsWith('RATE_LIMIT:')) {
-          await playLocalFallbackSimulation();
-          return;
-        }
-        if (err.startsWith('MODEL_NOT_FOUND:')) {
-          await playLocalFallbackSimulation();
-          return;
-        }
-        if (err.startsWith('Ağ hatası:')) {
-          await playLocalFallbackSimulation();
-          return;
-        }
-        Alert.alert('Simülasyon Hatası', err);
-        setIsLive(false);
-      },
+      () => {},
     );
+
+    // Immediately run local simulation — drives the live feed reliably
+    const localResult = simulateMatchLocally(homeSquad, awaySquad, homeUsername, awayUsername);
+    await playTimeline(localResult, 'local');
   };
 
   async function updateStandings(homeId: string, awayId: string, hScore: number, aScore: number) {
