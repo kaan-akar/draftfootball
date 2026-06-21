@@ -25,18 +25,42 @@ export default function SquadReviewScreen() {
   }, [roomId]);
 
   async function fetchSquads() {
-    const [{ data: room }, { data: rp }, { data: picks }] = await Promise.all([
+    const [{ data: room, error: roomError }, { data: rp, error: playersError }, { data: picks, error: picksError }] = await Promise.all([
       supabase.from('game_rooms').select('*').eq('id', roomId).single(),
       supabase.from('room_players').select('*').eq('room_id', roomId),
-      supabase.from('draft_picks').select('*, fp:football_player_id(football_players(*)), c:coach_id(coaches(*))').eq('room_id', roomId),
+      supabase.from('draft_picks').select('*').eq('room_id', roomId),
     ]);
+    if (roomError) throw roomError;
+    if (playersError) throw playersError;
+    if (picksError) throw picksError;
+
+    const footballPlayerIds = [...new Set((picks ?? []).map((pick: any) => pick.football_player_id).filter(Boolean))];
+    const coachIds = [...new Set((picks ?? []).map((pick: any) => pick.coach_id).filter(Boolean))];
+
+    const [{ data: footballPlayers, error: footballPlayersError }, { data: coaches, error: coachesError }] = await Promise.all([
+      footballPlayerIds.length > 0
+        ? supabase.from('football_players').select('*').in('id', footballPlayerIds)
+        : Promise.resolve({ data: [], error: null }),
+      coachIds.length > 0
+        ? supabase.from('coaches').select('*').in('id', coachIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (footballPlayersError) throw footballPlayersError;
+    if (coachesError) throw coachesError;
+
+    const playerMap = new Map((footballPlayers ?? []).map((player: any) => [player.id, player]));
+    const coachMap = new Map((coaches ?? []).map((coach: any) => [coach.id, coach]));
+
     const uid = (await supabase.auth.getSession()).data.session?.user.id ?? '';
     setIsHost(room?.host_id === uid);
 
     const result: PlayerSquad[] = (rp ?? []).map((p: any) => {
       const myPickRows = (picks ?? []).filter((pk: any) => pk.picker_id === p.user_id);
-      const playersPicked = myPickRows.filter((pk: any) => pk.football_player_id).map((pk: any) => pk.fp) as FootballPlayer[];
-      const coachPicked = myPickRows.find((pk: any) => pk.coach_id)?.c as Coach | null ?? null;
+      const playersPicked = myPickRows
+        .filter((pk: any) => pk.football_player_id)
+        .map((pk: any) => playerMap.get(pk.football_player_id))
+        .filter(Boolean) as FootballPlayer[];
+      const coachPicked = (p.picked_coach_id ? coachMap.get(p.picked_coach_id) : null) as Coach | null;
       return { username: p.username, formation: p.formation, coach: coachPicked, players: playersPicked };
     });
     setSquads(result);
@@ -45,11 +69,18 @@ export default function SquadReviewScreen() {
   const startTournament = async () => {
     setLoading(true);
     try {
-      const [{ data: rp }, { data: playerPicks }, { data: pendingPicks }] = await Promise.all([
+      const [
+        { data: rp, error: rpError },
+        { data: playerPicks, error: playerPicksError },
+        { data: pendingPicks, error: pendingPicksError },
+      ] = await Promise.all([
         supabase.from('room_players').select('user_id,username,picked_coach_id').eq('room_id', roomId),
         supabase.from('draft_picks').select('picker_id,football_player_id').eq('room_id', roomId).not('football_player_id', 'is', null),
         supabase.from('pending_picks').select('id').eq('room_id', roomId).in('status', ['active', 'auctioning']),
       ]);
+      if (rpError) throw rpError;
+      if (playerPicksError) throw playerPicksError;
+      if (pendingPicksError) throw pendingPicksError;
 
       if ((pendingPicks ?? []).length > 0) {
         Alert.alert('Draft tamamlanmadı', 'Aktif itiraz veya açık artırma bitmeden turnuva başlayamaz.');
@@ -76,16 +107,21 @@ export default function SquadReviewScreen() {
         room_id: roomId, home_player_id: homeId, away_player_id: awayId,
         round: i + 1, status: 'scheduled', home_score: 0, away_score: 0, events: [], summary: '', mvp: '',
       }));
-      await supabase.from('matches').insert(matchRows);
+      const { error: matchesError } = await supabase.from('matches').insert(matchRows);
+      if (matchesError) throw matchesError;
 
       const standingRows = ids.map((uid: string) => ({
         room_id: roomId, user_id: uid, played: 0, won: 0, drawn: 0, lost: 0, goals_for: 0, goals_against: 0, points: 0,
       }));
-      await supabase.from('standings').insert(standingRows);
-      await supabase.from('game_rooms').update({ status: 'tournament' }).eq('id', roomId);
+      const { error: standingsError } = await supabase.from('standings').insert(standingRows);
+      if (standingsError) throw standingsError;
+
+      const { error: roomUpdateError } = await supabase.from('game_rooms').update({ status: 'tournament' }).eq('id', roomId);
+      if (roomUpdateError) throw roomUpdateError;
+
       router.replace(`/room/${roomId}/fixture`);
     } catch (e: any) { Alert.alert('Hata', e.message); }
-    setLoading(false);
+    finally { setLoading(false); }
   };
 
   return (
