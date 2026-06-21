@@ -257,33 +257,42 @@ export async function simulateMatch(
 
     if (!reader) { onError('Stream okuyucu açılamadı'); return; }
 
+    // SSE frames can be split across chunks at arbitrary byte boundaries, so we
+    // must buffer and only process complete lines. Otherwise a "data: {...}"
+    // line cut in half is dropped by JSON.parse and the final text is truncated.
+    const processLine = (line: string) => {
+      if (!line.startsWith('data: ')) return;
+      const jsonStr = line.slice(6).trim();
+      if (jsonStr === '[DONE]' || jsonStr === '') return;
+      try {
+        const parsed = JSON.parse(jsonStr);
+        const parts = parsed?.candidates?.[0]?.content?.parts ?? [];
+        // Skip "thought" parts (thinking summaries) — only the real answer
+        // parts contain the JSON we want to accumulate.
+        for (const part of parts) {
+          if (part?.thought) continue;
+          if (typeof part?.text === 'string') fullText += part.text;
+        }
+        tryEmitPartialEvents(fullText, onEvent);
+      } catch {
+        // Incomplete/garbled SSE frame — ignore.
+      }
+    };
+
+    let buffer = '';
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split('\n');
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const jsonStr = line.slice(6).trim();
-        if (jsonStr === '[DONE]') continue;
-        try {
-          const parsed = JSON.parse(jsonStr);
-          const parts = parsed?.candidates?.[0]?.content?.parts ?? [];
-          // Skip "thought" parts (thinking summaries) — only the real answer
-          // parts contain the JSON we want to accumulate.
-          for (const part of parts) {
-            if (part?.thought) continue;
-            if (typeof part?.text === 'string') fullText += part.text;
-          }
-
-          // Try to emit partial events as they come in
-          tryEmitPartialEvents(fullText, onEvent);
-        } catch {
-          // Partial JSON, keep accumulating
-        }
-      }
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      // Keep the last (possibly incomplete) line in the buffer for next chunk.
+      buffer = lines.pop() ?? '';
+      for (const line of lines) processLine(line);
     }
+    // Flush whatever is left in the buffer after the stream ends.
+    buffer += decoder.decode();
+    if (buffer) processLine(buffer);
 
     // Parse final complete response
     try {
