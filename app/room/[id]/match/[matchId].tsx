@@ -20,6 +20,13 @@ function pickLiveMatch(matches: any[]) {
     .sort((a, b) => (a.round ?? 0) - (b.round ?? 0) || String(a.id).localeCompare(String(b.id)))[0] ?? null;
 }
 
+// Resolved team names cached per match id at module scope so they survive even
+// a full component remount (e.g. a redirect back to the same match). Without
+// this, a remount resets local state and the labels briefly fall back to
+// "Ev Sahibi / Deplasman" before the usernames are refetched — the flicker the
+// host kept seeing.
+const teamNameCache: Record<string, { home: string; away: string }> = {};
+
 const MatchLineups = React.memo(({
   homeSquad,
   awaySquad,
@@ -74,23 +81,19 @@ export default function MatchScreen() {
   const [isHost, setIsHost] = useState(false);
 
   // Team names are derived from the match + usernames, never stored as their own
-  // state. This prevents the host scoreboard from oscillating between the real
-  // names and the "Ev Sahibi / Deplasman" defaults during live playback.
-  // We also keep the last resolved names in a ref so that a transient empty
-  // `usernames` snapshot (e.g. during a refetch) never flips the labels back to
-  // the defaults — that flip is what looked like the screen "going back and
-  // forth" between real names and "Ev Sahibi / Deplasman".
-  const lastNamesRef = useRef<{ home: string; away: string }>({ home: '', away: '' });
+  // state. Once we have resolved real names for this match we cache them at
+  // module scope (keyed by matchId) and never fall back to the defaults again,
+  // so a transient empty `usernames` snapshot — or even a full remount — can't
+  // flip the labels between real names and "Ev Sahibi / Deplasman".
   const displayNames = useMemo(() => {
+    const cached = teamNameCache[matchId as string];
     const homeName = match?.home_player_id ? usernames[match.home_player_id] : undefined;
     const awayName = match?.away_player_id ? usernames[match.away_player_id] : undefined;
-    if (homeName) lastNamesRef.current.home = homeName;
-    if (awayName) lastNamesRef.current.away = awayName;
-    return {
-      home: homeName || lastNamesRef.current.home || 'Ev Sahibi',
-      away: awayName || lastNamesRef.current.away || 'Deplasman',
-    };
-  }, [match?.home_player_id, match?.away_player_id, usernames]);
+    const home = homeName || cached?.home || 'Ev Sahibi';
+    const away = awayName || cached?.away || 'Deplasman';
+    if (homeName || awayName) teamNameCache[matchId as string] = { home, away };
+    return { home, away };
+  }, [matchId, match?.home_player_id, match?.away_player_id, usernames]);
 
   const isPlayingRef = useRef(false);
   const currentMinuteRef = useRef(0);
@@ -117,6 +120,10 @@ export default function MatchScreen() {
     const roomChannel = supabase
       .channel(`room-live-${roomId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'matches', filter: `room_id=eq.${roomId}` }, async ({ new: changedRow }: any) => {
+        // While we (the host) are actively playing this match, never react to
+        // room updates — our own per-minute writes would otherwise trigger a
+        // redirect check and could bounce us to another screen mid-playback.
+        if (isPlayingRef.current) return;
         // Skip noisy live-playback updates for the current match — only act on status transitions
         if (changedRow?.id === matchId && changedRow?.status === 'live') return;
         const { data: roomMatches } = await supabase.from('matches').select('id,status,round').eq('room_id', roomId).order('round');
