@@ -300,11 +300,68 @@ export async function simulateMatch(
       const result: LLMMatchResponse = JSON.parse(clean);
       onDone(result);
     } catch {
-      onError('Maç sonucu parse edilemedi. Ham yanıt: ' + fullText.slice(0, 200));
+      // The JSON may be truncated (e.g. the model stopped mid-array). Rather
+      // than throwing away a perfectly good set of events, salvage whatever
+      // complete event objects we received and rebuild a valid result.
+      const salvaged = salvageMatchResult(fullText, homeUsername, awayUsername);
+      if (salvaged) {
+        onDone(salvaged);
+        return;
+      }
+      onError(
+        `Maç sonucu parse edilemedi. Uzunluk: ${fullText.length}. ` +
+        `Baş: ${fullText.slice(0, 120)} … Son: ${fullText.slice(-120)}`,
+      );
     }
   } catch (err: any) {
     onError(`Ağ hatası: ${err?.message ?? String(err)}`);
   }
+}
+
+// Rebuild a usable result from a (possibly truncated) raw response by pulling
+// out every complete event object. Used as a fallback when JSON.parse fails so
+// we keep the LLM narrative instead of falling back to the local simulator.
+const EVENT_REGEX = /\{[^{}]*"minute"[^{}]*"type"[^{}]*"team"[^{}]*"description"[^{}]*\}/g;
+
+function salvageMatchResult(
+  fullText: string,
+  homeUsername: string,
+  awayUsername: string,
+): LLMMatchResponse | null {
+  const eventsMatch = fullText.match(/"events"\s*:\s*\[([\s\S]*)/);
+  if (!eventsMatch) return null;
+
+  const events: LLMMatchResponse['events'] = [];
+  for (const m of eventsMatch[1].matchAll(EVENT_REGEX)) {
+    try {
+      const ev = JSON.parse(m[0]);
+      if (ev && typeof ev.minute === 'number' && ev.description) events.push(ev);
+    } catch {
+      // Skip malformed/incomplete event.
+    }
+  }
+  if (events.length === 0) return null;
+
+  events.sort((a, b) => a.minute - b.minute);
+
+  const goalsHome = events.filter((e) => e.type === 'goal' && e.team === 'home').length;
+  const goalsAway = events.filter((e) => e.type === 'goal' && e.team === 'away').length;
+  const homeScoreMatch = fullText.match(/"home_score"\s*:\s*(\d+)/);
+  const awayScoreMatch = fullText.match(/"away_score"\s*:\s*(\d+)/);
+  const home_score = homeScoreMatch ? parseInt(homeScoreMatch[1], 10) : goalsHome;
+  const away_score = awayScoreMatch ? parseInt(awayScoreMatch[1], 10) : goalsAway;
+
+  const summaryMatch = fullText.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  const mvpMatch = fullText.match(/"mvp"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+
+  return {
+    events,
+    home_score,
+    away_score,
+    summary: summaryMatch?.[1] ??
+      `${homeUsername} ile ${awayUsername} arasındaki maç ${home_score}-${away_score} sonuçlandı.`,
+    mvp: mvpMatch?.[1] ?? homeUsername,
+  };
 }
 
 // Track which events have already been emitted
