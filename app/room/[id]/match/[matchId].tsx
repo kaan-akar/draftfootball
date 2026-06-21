@@ -33,11 +33,78 @@ export default function MatchScreen() {
     fetchMatch();
   }, [matchId]);
 
+  useEffect(() => {
+    const channel = supabase
+      .channel(`match-live-${matchId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches', filter: `id=eq.${matchId}` }, ({ new: nextMatch }: any) => {
+        if (!nextMatch) return;
+        applyMatchState(nextMatch);
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [matchId]);
+
+  function applyMatchState(nextMatch: any) {
+    setMatch(nextMatch);
+    setHomeScore(nextMatch?.home_score ?? 0);
+    setAwayScore(nextMatch?.away_score ?? 0);
+    setEvents(nextMatch?.events ?? []);
+    setSummary(nextMatch?.summary ?? '');
+    setMvp(nextMatch?.mvp ?? '');
+    setIsLive(nextMatch?.status === 'live');
+  }
+
+  function calculateLiveScore(nextEvents: MatchEvent[]) {
+    return nextEvents.reduce(
+      (score, event) => {
+        if (event.type === 'goal') {
+          if (event.team === 'home') score.home += 1;
+          else score.away += 1;
+        }
+        return score;
+      },
+      { home: 0, away: 0 },
+    );
+  }
+
+  async function persistLiveSnapshot(nextEvents: MatchEvent[]) {
+    const score = calculateLiveScore(nextEvents);
+    setHomeScore(score.home);
+    setAwayScore(score.away);
+
+    await supabase.from('matches').update({
+      status: 'live',
+      home_score: score.home,
+      away_score: score.away,
+      events: nextEvents,
+    }).eq('id', matchId);
+  }
+
+  async function playLocalFallbackSimulation() {
+    if (!homeSquad || !awaySquad || !match) return;
+
+    const result = simulateMatchLocally(
+      homeSquad,
+      awaySquad,
+      usernames[match.home_player_id] ?? 'Ev Sahibi',
+      usernames[match.away_player_id] ?? 'Deplasman',
+    );
+
+    let streamedEvents: MatchEvent[] = [];
+    for (const event of result.events) {
+      streamedEvents = [...streamedEvents, event];
+      setEvents(streamedEvents);
+      await persistLiveSnapshot(streamedEvents);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    await persistMatchResult(result);
+  }
+
   async function fetchMatch() {
     const { data: m } = await supabase.from('matches').select('*').eq('id', matchId).single();
-    setMatch(m);
-    if (m?.home_score !== undefined) { setHomeScore(m.home_score); setAwayScore(m.away_score); }
-    if (m?.events?.length) { setEvents(m.events); setSummary(m.summary); setMvp(m.mvp); }
+    applyMatchState(m);
 
     const [{ data: rp }] = await Promise.all([
       supabase.from('room_players').select('user_id,username,formation,picked_coach_id').eq('room_id', roomId),
@@ -101,17 +168,6 @@ export default function MatchScreen() {
     await updateStandings(match.home_player_id, match.away_player_id, result.home_score, result.away_score);
   }
 
-  async function runLocalFallbackSimulation() {
-    if (!homeSquad || !awaySquad || !match) return;
-    const result = simulateMatchLocally(
-      homeSquad,
-      awaySquad,
-      usernames[match.home_player_id] ?? 'Ev Sahibi',
-      usernames[match.away_player_id] ?? 'Deplasman',
-    );
-    await persistMatchResult(result);
-  }
-
   const saveApiKey = async () => {
     if (!tempKey.trim()) return;
     await AsyncStorage.setItem(GEMINI_KEY_STORAGE, tempKey.trim());
@@ -136,12 +192,18 @@ export default function MatchScreen() {
       usernames[match.home_player_id] ?? 'Ev Sahibi',
       usernames[match.away_player_id] ?? 'Deplasman',
       apiKey,
-      (event) => { setEvents((prev) => [...prev, event]); },
+      (event) => {
+        setEvents((prev) => {
+          const nextEvents = [...prev, event];
+          void persistLiveSnapshot(nextEvents);
+          return nextEvents;
+        });
+      },
       async (result) => { await persistMatchResult(result); },
       async (err) => {
         if (err.startsWith('RATE_LIMIT:')) {
           Alert.alert('Gemini limitine takıldı', 'Geçici olarak yerel hızlı simülasyona geçiliyor.');
-          await runLocalFallbackSimulation();
+          await playLocalFallbackSimulation();
           return;
         }
         Alert.alert('Simülasyon Hatası', err);
