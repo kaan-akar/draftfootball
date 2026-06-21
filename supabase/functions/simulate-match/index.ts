@@ -34,6 +34,11 @@ Deno.serve(async (req) => {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           responseMimeType: 'application/json',
+          // Without a generous output budget the JSON gets truncated mid-array
+          // and the client can't parse it. Leave plenty of room for any model
+          // "thinking" tokens plus the full match JSON.
+          maxOutputTokens: 16384,
+          temperature: 1.0,
         }
       }),
     });

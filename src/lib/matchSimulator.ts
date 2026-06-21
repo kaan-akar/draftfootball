@@ -190,10 +190,11 @@ SİMÜLASYON KURALLARI:
 5. Değer farkları belirleyici olsun: efsane oyuncular (9-10) belirleyici anlar yaratsın; orta seviye oyuncular (1-4) daha sınırlı etki yapsın
 6. Formasyon çarpışmasını yansıt: hangi taraf orta sahaya hâkim? Kanatlarda kim üstün? Defans hattı ne kadar sağlam?
 7. 'action' tipini sadece gerçekten önemli taktiksel anlara kullan (örn. kritik bir press, hattı kıran pas, pozisyon değişikliği); tempo dolgusu ekleme
-8. Toplam event sayısı 12-20 arasında olsun; sadece önemli anlar
+8. Toplam event sayısı 10-14 arasında olsun; sadece önemli anlar
 9. Her event için 'type': goal | yellow_card | red_card | save | chance | action
 10. Her event için 'team': 'home' veya 'away'
-11. SADECE geçerli JSON döndür, başka hiçbir şey yazma
+11. Her 'description' TEK ve kısa bir cümle olsun (en fazla ~15 kelime); uzun paragraflar yazma
+12. SADECE geçerli JSON döndür, başka hiçbir şey yazma
 
 Döndüreceğin JSON formatı:
 {
