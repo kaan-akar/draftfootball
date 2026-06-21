@@ -211,6 +211,11 @@ export default function MatchScreen() {
           await playLocalFallbackSimulation();
           return;
         }
+        if (err.startsWith('Ağ hatası:')) {
+          Alert.alert('Gemini ağına ulaşılamadı', 'API servisine erişilemedi. Yerel hızlı simülasyona geçiliyor.');
+          await playLocalFallbackSimulation();
+          return;
+        }
         Alert.alert('Simülasyon Hatası', err);
         setIsLive(false);
       },
