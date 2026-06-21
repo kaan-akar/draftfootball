@@ -339,6 +339,10 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     setEvents(result.events);
     setSimulationSource(finalSource);
     setIsLive(false);
+    // Reflect the finished status locally too. Otherwise `isFinished` stays
+    // false and the autostart effect can re-trigger the whole simulation,
+    // bouncing the screen between the "starting" and "live" states.
+    setMatch((prev: any) => (prev ? { ...prev, status: 'finished' } : prev));
 
     await supabase.from('matches').update({
       status: 'finished',
@@ -536,9 +540,14 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
   const simulationSourceLabel = getSimulationSourceLabel(simulationSource);
   const { autostart } = useLocalSearchParams<{ autostart?: string }>();
 
+  // Autostart must fire exactly once. Without this guard, when a match finishes
+  // `isLive` flips back to false and this effect re-runs, restarting the whole
+  // simulation in a loop (the "starting ↔ live" screen bouncing).
+  const autostartedRef = useRef(false);
   useEffect(() => {
-    if (autostart !== '1') return;
+    if (autostart !== '1' || autostartedRef.current) return;
     if (!isHost || isLive || isFinished || !homeSquad || !awaySquad || !match) return;
+    autostartedRef.current = true;
     void startSimulation();
   }, [autostart, isHost, isLive, isFinished, homeSquad, awaySquad, match]);
 
