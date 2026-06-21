@@ -100,7 +100,14 @@ export default function MatchScreen() {
   const eventsRef = useRef<MatchEvent[]>([]);
   const llmEnhancedRef = useRef<{ summary: string; mvp: string } | null>(null);
 
+  // Fetch the match exactly once per matchId. The search-param object from
+  // expo-router can change identity across renders; without this guard the
+  // effect re-runs on every render and hammers the DB (the request storm seen
+  // in the network tab), which also bounces the UI between states.
+  const fetchedForMatchRef = useRef<string | null>(null);
   useEffect(() => {
+    if (!matchId || fetchedForMatchRef.current === matchId) return;
+    fetchedForMatchRef.current = matchId as string;
     fetchMatch();
   }, [matchId]);
 
@@ -463,12 +470,18 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
 
   const [isSimulating, setIsSimulating] = useState(false);
 
+  const simulatedMatchRef = useRef<string | null>(null);
   const startSimulation = async () => {
     // Guard against double taps / re-entry while we are already preparing or
     // playing a match.
     if (isSimulating || isPlayingRef.current) return;
+    // A match is played exactly once. This stops any re-trigger (e.g. an effect
+    // re-running after the match ends) from restarting the simulation in a loop.
+    if (simulatedMatchRef.current === matchId) return;
     if (!homeSquad || !awaySquad) { Alert.alert('Kadrolar yüklenemedi'); return; }
     if (!(await ensureCurrentMatchIsPlayable())) return;
+
+    simulatedMatchRef.current = matchId as string;
 
     const homeUsername = displayNames.home;
     const awayUsername = displayNames.away;
