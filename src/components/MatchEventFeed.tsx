@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { ScrollView, View, Text, StyleSheet } from 'react-native';
 import type { MatchEvent } from '../types/game';
 
@@ -16,6 +16,31 @@ const EVENT_ICON: Record<string, string> = {
   goal: '⚽', yellow_card: '🟨', red_card: '🟥',
   save: '🧤', chance: '💨', action: '▶',
 };
+
+// Memoised so the ScrollView only re-renders when new events arrive,
+// NOT every second when currentMinute changes. This stops PC scroll flicker.
+const EventList = memo(({ events }: { events: MatchEvent[] }) => (
+  <ScrollView style={styles.feed} showsVerticalScrollIndicator={false}>
+    {events.length === 0 && (
+      <Text style={styles.waiting}>Maç başlıyor...</Text>
+    )}
+    {[...events].reverse().map((ev, reversedIdx) => (
+      <View
+        key={events.length - 1 - reversedIdx}
+        style={[
+          styles.event,
+          ev.type === 'goal' && styles.goalEvent,
+          ev.type === 'red_card' && styles.redEvent,
+        ]}
+      >
+        <Text style={styles.minute}>{ev.minute}'</Text>
+        <Text style={styles.icon}>{EVENT_ICON[ev.type] ?? '▶'}</Text>
+        <Text style={styles.desc}>{ev.description}</Text>
+      </View>
+    ))}
+    <View style={{ height: 24 }} />
+  </ScrollView>
+));
 
 export default function MatchEventFeed({
   events,
@@ -37,30 +62,7 @@ export default function MatchEventFeed({
       </View>
       {isLive && <Text style={styles.liveTag}>🔴 CANLI {currentMinute ?? 0}'</Text>}
 
-      {/* Events */}
-      <ScrollView
-        style={styles.feed}
-        showsVerticalScrollIndicator={false}
-      >
-        {events.length === 0 && (
-          <Text style={styles.waiting}>Maç başlıyor...</Text>
-        )}
-        {[...events].reverse().map((ev, reversedIdx) => (
-          <View
-            key={events.length - 1 - reversedIdx}
-            style={[
-              styles.event,
-              ev.type === 'goal' && styles.goalEvent,
-              ev.type === 'red_card' && styles.redEvent,
-            ]}
-          >
-            <Text style={styles.minute}>{ev.minute}'</Text>
-            <Text style={styles.icon}>{EVENT_ICON[ev.type] ?? '▶'}</Text>
-            <Text style={styles.desc}>{ev.description}</Text>
-          </View>
-        ))}
-        {isLive && <View style={{ height: 24 }} />}
-      </ScrollView>
+      <EventList events={events} />
     </View>
   );
 }

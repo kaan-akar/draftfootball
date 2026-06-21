@@ -52,7 +52,9 @@ export default function MatchScreen() {
   useEffect(() => {
     const roomChannel = supabase
       .channel(`room-live-${roomId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches', filter: `room_id=eq.${roomId}` }, async () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches', filter: `room_id=eq.${roomId}` }, async ({ new: changedRow }: any) => {
+        // Skip noisy live-playback updates for the current match — only act on status transitions
+        if (changedRow?.id === matchId && changedRow?.status === 'live') return;
         const { data: roomMatches } = await supabase.from('matches').select('id,status').eq('room_id', roomId).order('round');
         const liveMatch = (roomMatches ?? []).find((candidate: any) => candidate.status === 'live');
         if (liveMatch && liveMatch.id !== matchId) {
@@ -274,10 +276,7 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
     }).eq('id', matchId);
 
     await updateStandings(match.home_player_id, match.away_player_id, result.home_score, result.away_score);
-
-    if (isHost) {
-      await startNextMatchInQueue();
-    }
+    // Host manually proceeds via the "Devam Et" button — no auto-redirect here.
   }
 
   async function getOrderedMatches() {
@@ -475,6 +474,14 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
         )}
         {isSimulating && <Text style={styles.simulating}>⏳ LLM maç simüle ediyor...</Text>}
         {isLive && <Text style={styles.simulating}>🔄 Simüle ediliyor...</Text>}
+        {isFinished && isHost && (
+          <TouchableOpacity style={styles.startBtn} onPress={startNextMatchInQueue}>
+            <Text style={styles.startBtnText}>➡ Devam Et</Text>
+          </TouchableOpacity>
+        )}
+        {isFinished && !isHost && (
+          <Text style={styles.simulating}>Host maçı okuyuyor, bekleniyor...</Text>
+        )}
         {isFinished && (
           <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
             <Text style={styles.backBtnText}>← Fikstüre Dön</Text>
