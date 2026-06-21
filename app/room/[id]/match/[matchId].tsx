@@ -457,16 +457,51 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
   }, [autostart, isHost, isLive, isFinished, homeSquad, awaySquad, match]);
 
   return (
-    <View style={styles.screen}>
-      <MatchEventFeed
-        events={events}
-        homeUsername={displayNames.home}
-        awayUsername={displayNames.away}
-        homeScore={homeScore}
-        awayScore={awayScore}
-        currentMinute={currentMinute}
-        isLive={isLive}
-      />
+    <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
+      <View style={styles.feedWrapper}>
+        <MatchEventFeed
+          events={events}
+          homeUsername={displayNames.home}
+          awayUsername={displayNames.away}
+          homeScore={homeScore}
+          awayScore={awayScore}
+          currentMinute={currentMinute}
+          isLive={isLive}
+        />
+      </View>
+
+      {/* İlk 11 — her zaman görünür */}
+      {homeSquad && awaySquad && (
+        <View style={styles.lineupBox}>
+          {(['home', 'away'] as const).map((side) => {
+            const squad = side === 'home' ? homeSquad : awaySquad;
+            const name = side === 'home' ? displayNames.home : displayNames.away;
+            return (
+              <View key={side} style={styles.lineupCol}>
+                <Text style={styles.lineupTeam} numberOfLines={1}>{name}</Text>
+                <Text style={styles.lineupFormation}>{squad.formation}</Text>
+                {squad.coach ? (
+                  <Text style={styles.lineupCoach} numberOfLines={1}>🧑‍🏫 {squad.coach.name}</Text>
+                ) : null}
+                {(['GK', 'DEF', 'MID', 'FWD'] as const).map((group) => {
+                  const players = squad.slots.filter((s) => s.player?.position_group === group);
+                  if (!players.length) return null;
+                  return (
+                    <View key={group}>
+                      <Text style={styles.lineupGroup}>{group}</Text>
+                      {players.map((s) => (
+                        <Text key={s.slotId} style={styles.lineupPlayer} numberOfLines={1}>
+                          {s.player?.name ?? '—'}
+                        </Text>
+                      ))}
+                    </View>
+                  );
+                })}
+              </View>
+            );
+          })}
+        </View>
+      )}
 
       {summary ? (
         <View style={styles.summaryBox}>
@@ -502,12 +537,24 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
           </TouchableOpacity>
         )}
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#0f172a', padding: 16 },
+  screen: { flex: 1, backgroundColor: '#0f172a' },
+  container: { padding: 16, paddingBottom: 32 },
+  feedWrapper: { height: 340 },
+  lineupBox: {
+    flexDirection: 'row', backgroundColor: '#1f2937', borderRadius: 10,
+    padding: 12, marginTop: 10, gap: 8,
+  },
+  lineupCol: { flex: 1 },
+  lineupTeam: { color: '#f3f4f6', fontWeight: '900', fontSize: 13, marginBottom: 2 },
+  lineupFormation: { color: '#60a5fa', fontSize: 11, marginBottom: 2 },
+  lineupCoach: { color: '#a78bfa', fontSize: 11, marginBottom: 6 },
+  lineupGroup: { color: '#6b7280', fontSize: 10, fontWeight: '700', marginTop: 4, letterSpacing: 1 },
+  lineupPlayer: { color: '#d1d5db', fontSize: 12, paddingVertical: 1 },
   summaryBox: { backgroundColor: '#1f2937', borderRadius: 10, padding: 14, marginTop: 8 },
   summaryTitle: { color: '#f3f4f6', fontWeight: '700', marginBottom: 6 },
   summaryText: { color: '#9ca3af', fontSize: 13, lineHeight: 20 },
