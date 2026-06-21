@@ -565,10 +565,13 @@ function syncPlaybackState(nextEvents: MatchEvent[], minute: number) {
         ) : null}
 
         <View style={styles.footer}>
-          {!isFinished && !isLive && !isSimulating && (
+          {!isFinished && !isLive && !isSimulating && autostart !== '1' && (
             <TouchableOpacity style={styles.startBtn} onPress={startSimulation}>
               <Text style={styles.startBtnText}>▶ Maçı Başlat</Text>
             </TouchableOpacity>
+          )}
+          {!isFinished && !isLive && !isSimulating && autostart === '1' && (
+            <Text style={styles.simulating}>⏳ Maç hazırlanıyor...</Text>
           )}
           {isSimulating && <Text style={styles.simulating}>⏳ LLM maç simüle ediyor...</Text>}
           {isLive && <Text style={styles.simulating}>🔄 Simüle ediliyor...</Text>}

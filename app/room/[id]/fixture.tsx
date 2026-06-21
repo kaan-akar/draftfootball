@@ -39,8 +39,8 @@ export default function FixtureScreen() {
     }
   }
 
-  const startMatch = (matchId: string) => {
-    router.push(`/room/${roomId}/match/${matchId}`);
+  const startMatch = (matchId: string, autostart = false) => {
+    router.push(`/room/${roomId}/match/${matchId}${autostart ? '?autostart=1' : ''}`);
   };
 
   const goStandings = () => router.push(`/room/${roomId}/standings`);
@@ -73,7 +73,7 @@ export default function FixtureScreen() {
           </View>
           <Text style={styles.status}>{STATUS_LABEL[m.status] ?? m.status}</Text>
           {isHost && !liveMatchId && m.status === 'scheduled' && m.id === nextScheduledMatchId && (
-            <TouchableOpacity style={styles.playBtn} onPress={() => startMatch(m.id)}>
+            <TouchableOpacity style={styles.playBtn} onPress={() => startMatch(m.id, true)}>
               <Text style={styles.playBtnText}>▶ Sıradaki Maçı Oyna</Text>
             </TouchableOpacity>
           )}
