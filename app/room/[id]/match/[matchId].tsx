@@ -9,6 +9,8 @@ import { getSlotsForFormation } from '../../../../src/lib/formationUtils';
 import MatchEventFeed from '../../../../src/components/MatchEventFeed';
 import type { Squad, MatchEvent, Formation, MatchSimulationSource } from '../../../../src/types/game';
 
+const SIMULATION_MINUTE_MS = 1000;
+
 export default function MatchScreen() {
   const { id: roomId, matchId } = useLocalSearchParams<{ id: string; matchId: string }>();
   const [match, setMatch] = useState<any>(null);
@@ -17,6 +19,7 @@ export default function MatchScreen() {
   const [events, setEvents] = useState<MatchEvent[]>([]);
   const [homeScore, setHomeScore] = useState(0);
   const [awayScore, setAwayScore] = useState(0);
+  const [currentMinute, setCurrentMinute] = useState(0);
   const [isLive, setIsLive] = useState(false);
   const [summary, setSummary] = useState('');
   const [mvp, setMvp] = useState('');
@@ -66,6 +69,7 @@ export default function MatchScreen() {
     setMatch(nextMatch);
     setHomeScore(nextMatch?.home_score ?? 0);
     setAwayScore(nextMatch?.away_score ?? 0);
+    setCurrentMinute(nextMatch?.current_minute ?? 0);
     setEvents(nextMatch?.events ?? []);
     setSummary(nextMatch?.summary ?? '');
     setMvp(nextMatch?.mvp ?? '');
@@ -93,13 +97,24 @@ export default function MatchScreen() {
   }
 
   async function persistLiveSnapshot(nextEvents: MatchEvent[], source: MatchSimulationSource | null) {
+    const minute = nextEvents[nextEvents.length - 1]?.minute ?? currentMinute;
+    await persistPlaybackSnapshot(nextEvents, source, minute);
+  }
+
+  async function persistPlaybackSnapshot(
+    nextEvents: MatchEvent[],
+    source: MatchSimulationSource | null,
+    minute: number,
+  ) {
     const score = calculateLiveScore(nextEvents);
     setHomeScore(score.home);
     setAwayScore(score.away);
+    setCurrentMinute(minute);
 
     await supabase.from('matches').update({
       status: 'live',
       simulation_source: source,
+      current_minute: minute,
       home_score: score.home,
       away_score: score.away,
       events: nextEvents,
@@ -110,7 +125,7 @@ export default function MatchScreen() {
     if (!homeSquad || !awaySquad || !match) return;
 
     setSimulationSource('local');
-    await supabase.from('matches').update({ status: 'live', simulation_source: 'local' }).eq('id', matchId);
+    await supabase.from('matches').update({ status: 'live', simulation_source: 'local', current_minute: 0, events: [] }).eq('id', matchId);
 
     const result = simulateMatchLocally(
       homeSquad,
@@ -119,15 +134,7 @@ export default function MatchScreen() {
       usernames[match.away_player_id] ?? 'Deplasman',
     );
 
-    let streamedEvents: MatchEvent[] = [];
-    for (const event of result.events) {
-      streamedEvents = [...streamedEvents, event];
-      setEvents(streamedEvents);
-      await persistLiveSnapshot(streamedEvents, 'local');
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-
-    await persistMatchResult(result, 'local');
+    await playTimeline(result, 'local');
   }
 
   async function fetchMatch() {
@@ -192,6 +199,7 @@ export default function MatchScreen() {
   ) {
     setHomeScore(result.home_score);
     setAwayScore(result.away_score);
+    setCurrentMinute(90);
     setSummary(result.summary);
     setMvp(result.mvp);
     setEvents(result.events);
@@ -201,6 +209,7 @@ export default function MatchScreen() {
     await supabase.from('matches').update({
       status: 'finished',
       simulation_source: source,
+      current_minute: 90,
       home_score: result.home_score,
       away_score: result.away_score,
       events: result.events,
@@ -245,6 +254,28 @@ export default function MatchScreen() {
     router.replace(`/room/${roomId}/match/${claimedMatch.id}?autostart=1`);
   }
 
+  async function playTimeline(result: { events: MatchEvent[]; home_score: number; away_score: number; summary: string; mvp: string }, source: MatchSimulationSource) {
+    const orderedEvents = [...result.events].sort((a, b) => a.minute - b.minute);
+    let shownEvents: MatchEvent[] = [];
+    let nextEventIndex = 0;
+
+    setEvents([]);
+    setCurrentMinute(0);
+
+    for (let minute = 1; minute <= 90; minute += 1) {
+      while (nextEventIndex < orderedEvents.length && orderedEvents[nextEventIndex].minute <= minute) {
+        shownEvents = [...shownEvents, orderedEvents[nextEventIndex]];
+        nextEventIndex += 1;
+      }
+
+      setEvents(shownEvents);
+      await persistPlaybackSnapshot(shownEvents, source, minute);
+      await new Promise((resolve) => setTimeout(resolve, SIMULATION_MINUTE_MS));
+    }
+
+    await persistMatchResult(result, source);
+  }
+
   async function ensureCurrentMatchIsPlayable() {
     const roomMatches = await getOrderedMatches();
     const liveMatch = roomMatches.find((candidate: any) => candidate.status === 'live');
@@ -270,24 +301,19 @@ export default function MatchScreen() {
     resetMatchSimulator();
     setEvents([]);
     setHomeScore(0); setAwayScore(0);
+    setCurrentMinute(0);
     setSummary(''); setMvp('');
     setSimulationSource('llm');
     setIsLive(true);
 
-    await supabase.from('matches').update({ status: 'live', simulation_source: 'llm' }).eq('id', matchId);
+    await supabase.from('matches').update({ status: 'live', simulation_source: 'llm', current_minute: 0, events: [] }).eq('id', matchId);
 
     simulateMatch(
       homeSquad, awaySquad,
       usernames[match.home_player_id] ?? 'Ev Sahibi',
       usernames[match.away_player_id] ?? 'Deplasman',
-      (event) => {
-        setEvents((prev) => {
-          const nextEvents = [...prev, event];
-          void persistLiveSnapshot(nextEvents, 'llm');
-          return nextEvents;
-        });
-      },
-      async (result) => { await persistMatchResult(result, 'llm'); },
+      () => {},
+      async (result) => { await playTimeline(result, 'llm'); },
       async (err) => {
         if (err.startsWith('RATE_LIMIT:')) {
           Alert.alert('Gemini limitine takıldı', 'Geçici olarak yerel hızlı simülasyona geçiliyor.');
@@ -342,6 +368,7 @@ export default function MatchScreen() {
         awayUsername={usernames[match?.away_player_id] ?? 'Deplasman'}
         homeScore={homeScore}
         awayScore={awayScore}
+        currentMinute={currentMinute}
         isLive={isLive}
       />
 

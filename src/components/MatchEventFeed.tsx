@@ -8,6 +8,7 @@ interface Props {
   awayUsername: string;
   homeScore: number;
   awayScore: number;
+  currentMinute?: number;
   isLive?: boolean;
 }
 
@@ -16,7 +17,15 @@ const EVENT_ICON: Record<string, string> = {
   save: '🧤', chance: '💨', action: '▶',
 };
 
-export default function MatchEventFeed({ events, homeUsername, awayUsername, homeScore, awayScore, isLive }: Props) {
+export default function MatchEventFeed({
+  events,
+  homeUsername,
+  awayUsername,
+  homeScore,
+  awayScore,
+  currentMinute,
+  isLive,
+}: Props) {
 
   return (
     <View style={styles.wrap}>
@@ -26,7 +35,7 @@ export default function MatchEventFeed({ events, homeUsername, awayUsername, hom
         <Text style={styles.score}>{homeScore} – {awayScore}</Text>
         <Text style={styles.teamName}>{awayUsername}</Text>
       </View>
-      {isLive && <Text style={styles.liveTag}>🔴 CANLI</Text>}
+      {isLive && <Text style={styles.liveTag}>🔴 CANLI {currentMinute ?? 0}'</Text>}
 
       {/* Events */}
       <ScrollView

@@ -162,6 +162,7 @@ export interface Match {
   awayPlayerId: string;
   round: number;
   status: MatchStatus;
+  currentMinute: number;
   homeScore: number;
   awayScore: number;
   events: MatchEvent[];
