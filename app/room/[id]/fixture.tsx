@@ -8,10 +8,8 @@ export default function FixtureScreen() {
   const [matches, setMatches] = useState<any[]>([]);
   const [usernames, setUsernames] = useState<Record<string, string>>({});
   const [isHost, setIsHost] = useState(false);
-  const [myUserId, setMyUserId] = useState('');
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session: s } }) => { setMyUserId(s?.user.id ?? ''); });
     fetchData();
     const channel = supabase.channel(`fixture-${roomId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'matches', filter: `room_id=eq.${roomId}` }, fetchData)
@@ -29,6 +27,11 @@ export default function FixtureScreen() {
     setUsernames(Object.fromEntries((rp ?? []).map((p: any) => [p.user_id, p.username])));
     const uid = (await supabase.auth.getSession()).data.session?.user.id ?? '';
     setIsHost(room?.host_id === uid);
+
+    const liveMatch = (m ?? []).find((match: any) => match.status === 'live');
+    if (liveMatch) {
+      router.replace(`/room/${roomId}/match/${liveMatch.id}`);
+    }
   }
 
   const startMatch = (matchId: string) => {
@@ -40,6 +43,8 @@ export default function FixtureScreen() {
   const STATUS_LABEL: Record<string, string> = {
     scheduled: '📅 Planlandı', live: '🔴 Canlı', finished: '✅ Bitti',
   };
+  const liveMatchId = matches.find((match) => match.status === 'live')?.id;
+  const nextScheduledMatchId = matches.find((match) => match.status === 'scheduled')?.id;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
@@ -62,9 +67,17 @@ export default function FixtureScreen() {
             <Text style={styles.teamName}>{usernames[m.away_player_id] ?? '?'}</Text>
           </View>
           <Text style={styles.status}>{STATUS_LABEL[m.status] ?? m.status}</Text>
-          {isHost && m.status === 'scheduled' && (
+          {isHost && !liveMatchId && m.status === 'scheduled' && m.id === nextScheduledMatchId && (
             <TouchableOpacity style={styles.playBtn} onPress={() => startMatch(m.id)}>
-              <Text style={styles.playBtnText}>▶ Oyna</Text>
+              <Text style={styles.playBtnText}>▶ Sıradaki Maçı Oyna</Text>
+            </TouchableOpacity>
+          )}
+          {!liveMatchId && m.status === 'scheduled' && m.id !== nextScheduledMatchId && (
+            <Text style={styles.queueNote}>Önce önceki maçların bitmesi gerekiyor.</Text>
+          )}
+          {liveMatchId === m.id && (
+            <TouchableOpacity style={styles.watchBtn} onPress={() => startMatch(m.id)}>
+              <Text style={styles.watchBtnText}>👀 Canlı Maçı İzle</Text>
             </TouchableOpacity>
           )}
           {m.status === 'finished' && (
@@ -103,6 +116,9 @@ const styles = StyleSheet.create({
   status: { color: '#6b7280', fontSize: 11, textAlign: 'center', marginTop: 6 },
   playBtn: { backgroundColor: '#16a34a', borderRadius: 8, paddingVertical: 8, alignItems: 'center', marginTop: 8 },
   playBtnText: { color: '#fff', fontWeight: '700' },
+  queueNote: { color: '#94a3b8', fontSize: 11, textAlign: 'center', marginTop: 8 },
+  watchBtn: { backgroundColor: '#2563eb', borderRadius: 8, paddingVertical: 8, alignItems: 'center', marginTop: 8 },
+  watchBtnText: { color: '#fff', fontWeight: '700' },
   replayBtn: { backgroundColor: '#1f2937', borderRadius: 8, paddingVertical: 8, alignItems: 'center', marginTop: 8 },
   replayBtnText: { color: '#60a5fa', fontWeight: '700' },
   championBtn: { backgroundColor: '#d97706', borderRadius: 12, paddingVertical: 16, alignItems: 'center', marginTop: 12 },

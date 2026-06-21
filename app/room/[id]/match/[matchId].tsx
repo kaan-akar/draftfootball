@@ -22,6 +22,7 @@ export default function MatchScreen() {
   const [mvp, setMvp] = useState('');
   const [simulationSource, setSimulationSource] = useState<MatchSimulationSource | null>(null);
   const [usernames, setUsernames] = useState<Record<string, string>>({});
+  const [isHost, setIsHost] = useState(false);
 
   useEffect(() => {
     fetchMatch();
@@ -38,6 +39,28 @@ export default function MatchScreen() {
 
     return () => { supabase.removeChannel(channel); };
   }, [matchId]);
+
+  useEffect(() => {
+    const roomChannel = supabase
+      .channel(`room-live-${roomId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches', filter: `room_id=eq.${roomId}` }, async () => {
+        const { data: roomMatches } = await supabase.from('matches').select('id,status').eq('room_id', roomId).order('round');
+        const liveMatch = (roomMatches ?? []).find((candidate: any) => candidate.status === 'live');
+        if (liveMatch && liveMatch.id !== matchId) {
+          router.replace(`/room/${roomId}/match/${liveMatch.id}`);
+          return;
+        }
+
+        const currentMatch = (roomMatches ?? []).find((candidate: any) => candidate.id === matchId);
+        const hasRemainingMatches = (roomMatches ?? []).some((candidate: any) => candidate.status !== 'finished');
+        if (currentMatch?.status === 'finished' && !hasRemainingMatches) {
+          router.replace(`/room/${roomId}/champion`);
+        }
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(roomChannel); };
+  }, [matchId, roomId]);
 
   function applyMatchState(nextMatch: any) {
     setMatch(nextMatch);
@@ -108,7 +131,10 @@ export default function MatchScreen() {
   }
 
   async function fetchMatch() {
-    const { data: m } = await supabase.from('matches').select('*').eq('id', matchId).single();
+    const [{ data: m }, { data: room }] = await Promise.all([
+      supabase.from('matches').select('*').eq('id', matchId).single(),
+      supabase.from('game_rooms').select('host_id').eq('id', roomId).single(),
+    ]);
     applyMatchState(m);
 
     const [{ data: rp }] = await Promise.all([
@@ -116,6 +142,14 @@ export default function MatchScreen() {
     ]);
     const unmap = Object.fromEntries((rp ?? []).map((p: any) => [p.user_id, p.username]));
     setUsernames(unmap);
+    const uid = (await supabase.auth.getSession()).data.session?.user.id ?? '';
+    setIsHost(room?.host_id === uid);
+
+    const liveMatch = (await supabase.from('matches').select('id,status').eq('room_id', roomId).order('round')).data?.find((candidate: any) => candidate.status === 'live');
+    if (liveMatch && liveMatch.id !== matchId) {
+      router.replace(`/room/${roomId}/match/${liveMatch.id}`);
+      return;
+    }
 
     const buildSquad = async (userId: string): Promise<Squad | null> => {
       const player = (rp ?? []).find((p: any) => p.user_id === userId);
@@ -176,10 +210,62 @@ export default function MatchScreen() {
     }).eq('id', matchId);
 
     await updateStandings(match.home_player_id, match.away_player_id, result.home_score, result.away_score);
+
+    if (isHost) {
+      await startNextMatchInQueue();
+    }
+  }
+
+  async function getOrderedMatches() {
+    const { data } = await supabase.from('matches').select('*').eq('room_id', roomId).order('round');
+    return data ?? [];
+  }
+
+  async function startNextMatchInQueue() {
+    const roomMatches = await getOrderedMatches();
+    const nextMatch = roomMatches.find((candidate: any) => candidate.status === 'scheduled');
+
+    if (!nextMatch) {
+      router.replace(`/room/${roomId}/champion`);
+      return;
+    }
+
+    const { data: claimedMatch, error } = await supabase
+      .from('matches')
+      .update({ status: 'live' })
+      .eq('id', nextMatch.id)
+      .eq('status', 'scheduled')
+      .select('*')
+      .single();
+
+    if (error || !claimedMatch) {
+      return;
+    }
+
+    router.replace(`/room/${roomId}/match/${claimedMatch.id}?autostart=1`);
+  }
+
+  async function ensureCurrentMatchIsPlayable() {
+    const roomMatches = await getOrderedMatches();
+    const liveMatch = roomMatches.find((candidate: any) => candidate.status === 'live');
+    if (liveMatch && liveMatch.id !== matchId) {
+      router.replace(`/room/${roomId}/match/${liveMatch.id}`);
+      return false;
+    }
+
+    const nextScheduledMatch = roomMatches.find((candidate: any) => candidate.status === 'scheduled');
+    if (!liveMatch && nextScheduledMatch && nextScheduledMatch.id !== matchId && match?.status === 'scheduled') {
+      Alert.alert('Sıralı oynatma aktif', 'Önce sıradaki maçı bitirmen gerekiyor.');
+      router.replace(`/room/${roomId}/match/${nextScheduledMatch.id}`);
+      return false;
+    }
+
+    return true;
   }
 
   const startSimulation = async () => {
     if (!homeSquad || !awaySquad) { Alert.alert('Kadrolar yüklenemedi'); return; }
+    if (!(await ensureCurrentMatchIsPlayable())) return;
 
     resetMatchSimulator();
     setEvents([]);
@@ -240,6 +326,13 @@ export default function MatchScreen() {
 
   const isFinished = match?.status === 'finished';
   const simulationSourceLabel = getSimulationSourceLabel(simulationSource);
+  const { autostart } = useLocalSearchParams<{ autostart?: string }>();
+
+  useEffect(() => {
+    if (autostart !== '1') return;
+    if (!isHost || isLive || isFinished || !homeSquad || !awaySquad || !match) return;
+    void startSimulation();
+  }, [autostart, isHost, isLive, isFinished, homeSquad, awaySquad, match]);
 
   return (
     <View style={styles.screen}>
