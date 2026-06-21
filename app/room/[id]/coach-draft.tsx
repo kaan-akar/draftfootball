@@ -21,6 +21,7 @@ export default function CoachDraftScreen() {
   const [roomPlayers, setRoomPlayers] = useState<any[]>([]);
   const [draftSession, setDraftSession] = useState<any>(null);
   const [pickedCoachIds, setPickedCoachIds] = useState<Set<string>>(new Set());
+  const [coachPickedByUser, setCoachPickedByUser] = useState<Set<string>>(new Set());
   const [auction, setAuction] = useState<Auction | null>(null);
   const [auctionTarget, setAuctionTarget] = useState<Coach | null>(null);
   const [pendingPick, setPendingPick] = useState<PendingPick | null>(null);
@@ -46,12 +47,13 @@ export default function CoachDraftScreen() {
       supabase.from('coaches').select('*').order('price', { ascending: false }),
       supabase.from('room_players').select('*').eq('room_id', roomId),
       supabase.from('draft_sessions').select('*').eq('room_id', roomId).single(),
-      supabase.from('draft_picks').select('coach_id').eq('room_id', roomId).not('coach_id', 'is', null),
+      supabase.from('draft_picks').select('coach_id,picker_id').eq('room_id', roomId).not('coach_id', 'is', null),
     ]);
     setCoaches((c ?? []) as Coach[]);
     setRoomPlayers(rp ?? []);
     setDraftSession(ds);
     setPickedCoachIds(new Set((picks ?? []).map((p: any) => p.coach_id).filter(Boolean)));
+    setCoachPickedByUser(new Set((picks ?? []).map((p: any) => p.picker_id).filter(Boolean)));
     fetchPendingPick();
   }
 
@@ -97,9 +99,12 @@ export default function CoachDraftScreen() {
     && pendingPick.eligible_objectors.includes(myUserId)
     && !(pendingPick.passed_by ?? []).includes(myUserId);
 
+  // A player who has already secured a coach must not be able to object to or
+  // bid on another coach. We check both the room_players flag and the durable
+  // draft_picks record so a delayed realtime update can't let them slip through.
   const getEligibleCoachBidders = useCallback((coach: Coach) => roomPlayers
-    .filter((p) => p.player_budget >= coach.price && !p.picked_coach_id)
-    .map((p) => p.user_id), [roomPlayers]);
+    .filter((p) => p.player_budget >= coach.price && !p.picked_coach_id && !coachPickedByUser.has(p.user_id))
+    .map((p) => p.user_id), [roomPlayers, coachPickedByUser]);
 
   const handleSelect = async (coach: Coach) => {
     if (!isMyTurn) { Alert.alert('Şu an senin sıran değil'); return; }
