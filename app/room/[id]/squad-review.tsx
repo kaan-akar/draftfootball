@@ -43,11 +43,35 @@ export default function SquadReviewScreen() {
   }
 
   const startTournament = async () => {
-    const { data: rp } = await supabase.from('room_players').select('user_id').eq('room_id', roomId);
-    const ids = (rp ?? []).map((p: any) => p.user_id);
-    const fixtures = generateFixture(ids);
     setLoading(true);
     try {
+      const [{ data: rp }, { data: playerPicks }, { data: pendingPicks }] = await Promise.all([
+        supabase.from('room_players').select('user_id,username,picked_coach_id').eq('room_id', roomId),
+        supabase.from('draft_picks').select('picker_id,football_player_id').eq('room_id', roomId).not('football_player_id', 'is', null),
+        supabase.from('pending_picks').select('id').eq('room_id', roomId).in('status', ['active', 'auctioning']),
+      ]);
+
+      if ((pendingPicks ?? []).length > 0) {
+        Alert.alert('Draft tamamlanmadı', 'Aktif itiraz veya açık artırma bitmeden turnuva başlayamaz.');
+        return;
+      }
+
+      const ids = (rp ?? []).map((p: any) => p.user_id);
+      const incompletePlayer = (rp ?? []).find((player: any) => {
+        const playerCount = (playerPicks ?? []).filter((pick: any) => pick.picker_id === player.user_id).length;
+        return !player.picked_coach_id || playerCount !== 11;
+      });
+
+      if (incompletePlayer) {
+        const playerCount = (playerPicks ?? []).filter((pick: any) => pick.picker_id === incompletePlayer.user_id).length;
+        Alert.alert(
+          'Eksik kadro',
+          `${incompletePlayer.username} için kadro tamam değil. TD: ${incompletePlayer.picked_coach_id ? 'tamam' : 'eksik'}, oyuncu: ${playerCount}/11.`,
+        );
+        return;
+      }
+
+      const fixtures = generateFixture(ids);
       const matchRows = fixtures.map(([homeId, awayId], i) => ({
         room_id: roomId, home_player_id: homeId, away_player_id: awayId,
         round: i + 1, status: 'scheduled', home_score: 0, away_score: 0, events: [], summary: '', mvp: '',
