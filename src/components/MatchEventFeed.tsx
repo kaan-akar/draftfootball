@@ -45,9 +45,9 @@ export default function MatchEventFeed({
         {events.length === 0 && (
           <Text style={styles.waiting}>Maç başlıyor...</Text>
         )}
-        {[...events].reverse().map((ev, i) => (
+        {[...events].reverse().map((ev, reversedIdx) => (
           <View
-            key={i}
+            key={events.length - 1 - reversedIdx}
             style={[
               styles.event,
               ev.type === 'goal' && styles.goalEvent,
