@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, FlatList, StyleSheet, Alert, TouchableOpacity, useWindowDimensions,
+  View, Text, FlatList, StyleSheet, Alert, TouchableOpacity, useWindowDimensions, ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
@@ -21,29 +21,69 @@ function FormationPreview({
   formation,
   assignedSlots,
   floating,
+  compact,
 }: {
   formation?: Formation;
   assignedSlots: Array<{ slotId: string; position: string; player?: FootballPlayer }>;
   floating: boolean;
+  compact?: boolean;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const filledCount = assignedSlots.filter((slot) => slot.player).length;
+
+  if (compact && !expanded) {
+    return (
+      <TouchableOpacity
+        style={styles.previewCompact}
+        onPress={() => setExpanded(true)}
+        activeOpacity={0.8}
+      >
+        <View style={styles.previewCompactMain}>
+          <Text style={styles.previewTitle}>Taktiğin</Text>
+          <Text style={styles.previewFormation}>{formation ?? 'Formasyon yok'}</Text>
+        </View>
+        <Text style={styles.previewCompactMeta}>
+          {filledCount}/11 dolu · Göster ▾
+        </Text>
+      </TouchableOpacity>
+    );
+  }
+
+  const slotList = assignedSlots.length === 0 ? (
+    <Text style={styles.previewHint}>Oyuncular seçildikçe yerleşim burada görünecek.</Text>
+  ) : (
+    assignedSlots.map((slot) => (
+      <View key={slot.slotId} style={styles.previewRow}>
+        <Text style={styles.previewSlot}>{slot.position}</Text>
+        <Text
+          style={[styles.previewPlayer, !slot.player && styles.previewEmptyPlayer]}
+          numberOfLines={1}
+        >
+          {slot.player?.name ?? 'Boş'}
+        </Text>
+      </View>
+    ))
+  );
+
   return (
-    <View style={[styles.previewCard, floating && styles.previewFloating]}>
-      <Text style={styles.previewTitle}>Taktiğin</Text>
-      <Text style={styles.previewFormation}>{formation ?? 'Formasyon yok'}</Text>
-      {assignedSlots.length === 0 ? (
-        <Text style={styles.previewHint}>Oyuncular seçildikçe yerleşim burada görünecek.</Text>
+    <View style={[styles.previewCard, floating && styles.previewFloating, compact && styles.previewCardCompact]}>
+      <View style={styles.previewHeader}>
+        <View>
+          <Text style={styles.previewTitle}>Taktiğin</Text>
+          <Text style={styles.previewFormation}>{formation ?? 'Formasyon yok'}</Text>
+        </View>
+        {compact ? (
+          <TouchableOpacity onPress={() => setExpanded(false)} hitSlop={8}>
+            <Text style={styles.previewCollapse}>Gizle ▴</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      {compact ? (
+        <ScrollView style={styles.previewSlotScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+          {slotList}
+        </ScrollView>
       ) : (
-        assignedSlots.map((slot) => (
-          <View key={slot.slotId} style={styles.previewRow}>
-            <Text style={styles.previewSlot}>{slot.position}</Text>
-            <Text
-              style={[styles.previewPlayer, !slot.player && styles.previewEmptyPlayer]}
-              numberOfLines={1}
-            >
-              {slot.player?.name ?? 'Boş'}
-            </Text>
-          </View>
-        ))
+        slotList
       )}
     </View>
   );
@@ -199,25 +239,29 @@ export default function PlayerDraftScreen() {
       </View>
 
       {draftSession && (
-        <DraftOrderIndicator
-          pickOrder={draftSession.pick_order}
-          currentPickerIndex={draftSession.current_picker_index}
-          currentRound={round}
-          usernames={usernames}
-          myUserId={myUserId}
-        />
-      )}
-
-      {!showFloatingPreview && (
-        <FormationPreview
-          formation={myFormation}
-          assignedSlots={myAssignedSlots}
-          floating={false}
-        />
+        <View style={styles.orderWrap}>
+          <DraftOrderIndicator
+            pickOrder={draftSession.pick_order}
+            currentPickerIndex={draftSession.current_picker_index}
+            currentRound={round}
+            usernames={usernames}
+            myUserId={myUserId}
+          />
+        </View>
       )}
 
       <View style={styles.content}>
+        {!showFloatingPreview && (
+          <FormationPreview
+            formation={myFormation}
+            assignedSlots={myAssignedSlots}
+            floating={false}
+            compact
+          />
+        )}
+
         <FlatList
+          style={styles.listFlex}
           data={visiblePlayers}
           keyExtractor={(p) => p.id}
           renderItem={({ item }) => {
@@ -275,11 +319,31 @@ const styles = StyleSheet.create({
   obj: { color: '#f59e0b', fontSize: 12, marginTop: 2 },
   squad: { color: '#60a5fa', fontSize: 12, marginTop: 2 },
   waiting: { color: '#93c5fd', fontSize: 12, marginTop: 4 },
-  content: { flex: 1 },
+  orderWrap: { paddingHorizontal: 16, paddingTop: 8 },
+  content: { flex: 1, minHeight: 0 },
+  previewCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#111827',
+    borderColor: '#1f2937',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginHorizontal: 16,
+    marginBottom: 8,
+  },
+  previewCompactMain: { flex: 1, marginRight: 8 },
+  previewCompactMeta: { color: '#60a5fa', fontSize: 11, fontWeight: '700' },
   previewCard: {
     backgroundColor: '#111827', borderColor: '#1f2937', borderWidth: 1,
-    borderRadius: 12, padding: 12, margin: 16, marginTop: 0,
+    borderRadius: 12, padding: 12, marginHorizontal: 16, marginBottom: 8,
   },
+  previewCardCompact: { marginTop: 0 },
+  previewHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 },
+  previewCollapse: { color: '#60a5fa', fontSize: 11, fontWeight: '700' },
+  previewSlotScroll: { maxHeight: 120 },
   previewFloating: {
     position: 'absolute', top: 16, right: 16, width: 240, margin: 0, zIndex: 3,
   },
@@ -290,7 +354,8 @@ const styles = StyleSheet.create({
   previewSlot: { color: '#9ca3af', fontSize: 11, fontWeight: '700', width: 34 },
   previewPlayer: { color: '#e5e7eb', fontSize: 12, flex: 1 },
   previewEmptyPlayer: { color: '#6b7280', fontStyle: 'italic' },
-  list: { padding: 16 },
+  listFlex: { flex: 1 },
+  list: { padding: 16, paddingTop: 0 },
   listWithPreview: { paddingRight: 272 },
   empty: { color: '#6b7280', textAlign: 'center', marginTop: 32 },
 });
