@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert, Platform } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
 
@@ -40,6 +40,12 @@ export default function FixtureScreen() {
   }
 
   const startMatch = (matchId: string, autostart = false) => {
+    // On web, drop focus from the pressed button before navigating. Otherwise
+    // Expo Router hides the old screen with aria-hidden while it still holds
+    // focus, which trips an accessibility warning.
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      (document.activeElement as HTMLElement | null)?.blur?.();
+    }
     router.push(`/room/${roomId}/match/${matchId}${autostart ? '?autostart=1' : ''}`);
   };
 
